@@ -1,0 +1,110 @@
+1. Homepage
+Live market prices (BTC, ETH, USDT, NGN)
+User wallet balance (₦)
+Total profit/loss
+Deposit button
+Withdraw button
+Referral earnings
+Latest announcements
+2. User Registration
+Phone number
+Email
+Password
+Referral code
+OTP verification
+3. User Dashboard
+After login users should see:
+Wallet balance
+Trading balance
+Total earnings
+Active trades
+Transaction history
+Referral income
+Account verification status
+4. Naira Wallet
+Instead of USDT only, users should have:
+Naira Wallet (₦)
+USDT Wallet
+BTC Wallet
+ETH Wallet
+Users can convert between NGN and crypto.
+ through:
+5. Withdraw
+Withdraw to:
+Nigerian bank account
+Crypto wallet
+Admin can:
+Approve manually
+Approve automatically
+Reject withdrawals
+6. Trading Section
+Display:
+BTC/NGN
+ETH/NGN
+USDT/NGN
+BNB/NGN
+Include:
+Live charts
+Buy
+Sell
+Trading history
+Current market prices
+
+7. Referral System
+Users receive a referral link.
+Example:
+Level 1 = 10%
+Level 2 = 2%
+Level 3 = 1%
+Dashboard should show:
+Total referrals
+Active referrals
+Referral earnings
+8.mine section
+Like the "Mine" button in the screenshot:
+Authentication
+Invite friends
+Earn rewards
+Deposit record
+Withdrawal record
+Password
+Contract order
+About us
+Sign out
+
+
+12. Admin Panel
+The admin should be able to:
+Manage users
+Freeze/unfreeze accounts
+Credit/debit wallets
+Approve withdrawals
+View deposits
+Send announcements
+View reports
+Manage referral commissions
+13. Security
+Two-factor authentication (2FA)
+OTP verification
+KYC verification
+Login alerts
+Withdrawal PIN
+Anti-fraud monitoring
+14. Charts
+Use live market data from providers such as:
+Binance
+CoinGecko
+CoinMarketCap
+Display:
+Candlestick charts
+Price changes
+Volume
+Market depth
+15. Bottom Navigation
+Similar to the screenshot:
+Home
+Markets
+Trade
+Wallet
+Team
+Profile

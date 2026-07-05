@@ -1,0 +1,45 @@
+import 'dotenv/config';
+import { z } from 'zod';
+
+const schema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    PORT: z.coerce.number().int().positive().default(5000),
+    MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/market-side'),
+    CLIENT_ORIGIN: z.string().url().default('http://localhost:5173'),
+    // Parent domain for auth cookies in production (e.g. ".example.com" when the
+    // frontend and API are on subdomains). Unset → host-only cookies.
+    COOKIE_DOMAIN: z.string().optional(),
+    JWT_ACCESS_SECRET: z.string().default('dev-only-access-secret-do-not-use-in-prod'),
+    JWT_REFRESH_SECRET: z.string().default('dev-only-refresh-secret-do-not-use-in-prod'),
+    ACCESS_TOKEN_TTL: z.string().default('15m'),
+    REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+    BCRYPT_ROUNDS: z.coerce.number().int().min(8).max(15).default(10),
+    CAPTCHA_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+    CAPTCHA_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    // Payment gateway (deposits/withdrawals)
+    PG_BASE_URL: z.string().url().optional(),
+    PG_MERCHANT_ID: z.string().optional(),
+    PG_SECRET_KEY: z.string().optional(),
+    PG_COUNTRY_CODE: z.string().default('NGN'),
+    PG_DEPOSIT_PAYTYPE: z.string().default('NGN_TRANSFER'),
+    PG_WITHDRAW_PAYTYPE: z.string().default('NGN_PAYOUT'),
+    PG_CALLBACK_BASE_URL: z.string().url().optional(),
+    PG_CALLBACK_IPS: z.string().default(''), // comma-separated allowlist for webhook source IPs
+  })
+  .superRefine((cfg, ctx) => {
+    if (cfg.NODE_ENV === 'production') {
+      for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+        if (cfg[key].startsWith('dev-only-') || cfg[key].length < 32) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} must be set to a strong secret (>= 32 chars) in production`,
+          });
+        }
+      }
+    }
+  });
+
+export const env = schema.parse(process.env);
+export const isProd = env.NODE_ENV === 'production';

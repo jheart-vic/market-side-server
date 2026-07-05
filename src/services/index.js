@@ -1,0 +1,17 @@
+// Namespaced service exports — uncomment as each service is implemented.
+export * as captchaService from './captcha.service.js';
+export * as tokenService from './token.service.js';
+export * as authService from './auth.service.js';
+export * as walletService from './wallet.service.js';
+export * as referralService from './referral.service.js';
+export * as notificationService from './notification.service.js';
+// export * as userService from './user.service.js';
+// export * as ledgerService from './ledger.service.js';
+// export * as priceService from './price.service.js';
+// export * as tradeService from './trade.service.js';
+// export * as signalService from './signal.service.js';
+// export * as paymentService from './payment.service.js';
+// export * as depositService from './deposit.service.js';
+// export * as withdrawalService from './withdrawal.service.js';
+// export * as announcementService from './announcement.service.js';
+// export * as auditService from './audit.service.js';

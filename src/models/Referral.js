@@ -12,7 +12,7 @@ const referralSchema = new Schema(
     level: { type: Number, required: true, min: 1, max: REFERRAL_LEVELS },
     event: { type: String, enum: REFERRAL_EVENTS, required: true },
     ratePct: { type: Number, required: true }, // commission % applied, snapshotted
-    amount: { type: Schema.Types.Decimal128, required: true }, // kobo
+    amount: { type: Schema.Types.Decimal128, required: true }, // PLATFORM_CURRENCY smallest units (micro-USDT)
     // The deposit/trade that triggered the commission
     sourceRef: {
       kind: { type: String },

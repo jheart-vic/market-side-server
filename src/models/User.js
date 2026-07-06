@@ -21,6 +21,10 @@ const userSchema = new Schema(
       e164: { type: String, required: true, unique: true }, // canonical unique key
     },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    // Display handle; unique when set (sparse: accounts created before the field
+    // existed have none and can add one via PATCH /users/me)
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
+    fullName: { type: String, trim: true },
     passwordHash: { type: String, required: true, select: false },
 
     // Password reset is captcha + security question (no SMS/email OTP)
@@ -44,8 +48,10 @@ const userSchema = new Schema(
       status: { type: String, enum: KYC_STATUS, default: 'unverified' },
       documents: [
         {
-          kind: String, // e.g. "national_id", "utility_bill"
-          url: String,
+          kind: String, // KYC_DOC_TYPES or "selfie"
+          url: String, // provider URL (private assets need a signed URL to view)
+          publicId: String, // Cloudinary public_id — used for signed delivery + deletion
+          resourceType: { type: String, enum: ['image', 'raw'], default: 'image' }, // raw = PDF
           uploadedAt: { type: Date, default: Date.now },
         },
       ],

@@ -3,6 +3,7 @@
 // all. Test data is deleted afterwards. Run with `npm run test:http`.
 import assert from 'node:assert/strict';
 import { app } from '../src/app.js';
+import { initSocket } from '../src/socket/index.js';
 import { connectDb, disconnectDb } from '../src/config/db.js';
 import { Captcha } from '../src/models/Captcha.js';
 import { User } from '../src/models/User.js';
@@ -51,10 +52,12 @@ const stamp = Date.now().toString().slice(-9);
 const testEmail = `http-${stamp}@test.local`;
 let userId;
 let server;
+let socketGateway;
 
 try {
   await connectDb();
   server = app.listen(0);
+  socketGateway = initSocket(server);
   base = `http://127.0.0.1:${server.address().port}`;
 
   // health
@@ -80,6 +83,8 @@ try {
     body: {
       phone: '080' + stamp.slice(1),
       email: testEmail,
+      username: `http_${stamp}`,
+      fullName: 'HTTP E2E User',
       password: 'Passw0rd!x',
       securityQuestion: 'Favourite colour?',
       securityAnswer: 'blue',
@@ -111,12 +116,52 @@ try {
   // wallets
   const wallets = await api('/api/wallets');
   assert.equal(wallets.status, 200);
-  assert.equal(wallets.body.wallets.length, 4);
+  assert.equal(wallets.body.wallets.length, 5);
   const ngn = await api('/api/wallets/NGN');
   assert.equal(ngn.body.wallet.balance, '0');
   const badCur = await api('/api/wallets/DOGE');
   assert.equal(badCur.status, 400);
   console.log('✓ GET /api/wallets + /api/wallets/NGN (DOGE → 400)');
+
+  // profile + user-facing feature routes
+  const profile = await api('/api/users/me');
+  assert.equal(profile.status, 200);
+  assert.equal(profile.body.profile.username, `http_${stamp}`);
+  assert.equal(profile.body.profile.fullName, 'HTTP E2E User');
+  const tx = await api('/api/transactions?currency=NGN');
+  assert.equal(tx.status, 200);
+  assert.ok(Array.isArray(tx.body.items), 'transactions list shape');
+  const notif = await api('/api/notifications');
+  assert.equal(notif.status, 200);
+  assert.ok(typeof notif.body.unreadCount === 'number');
+  const refStats = await api('/api/referrals/stats');
+  assert.equal(refStats.status, 200);
+  assert.equal(refStats.body.stats.totalReferrals, 0);
+  const refQr = await api('/api/referrals/qr');
+  assert.ok(refQr.body.qr.startsWith('data:image/png;base64,'), 'referral QR data-URL');
+  const ann = await api('/api/announcements');
+  assert.equal(ann.status, 200);
+  const trades = await api('/api/trades');
+  assert.equal(trades.status, 200);
+  assert.deepEqual(trades.body.items, []);
+  const activeSignals = await api('/api/signals/active');
+  assert.equal(activeSignals.status, 200);
+  assert.ok(Array.isArray(activeSignals.body.signals));
+  console.log('✓ GET /users/me, /transactions, /notifications, /referrals, /announcements, /trades, /signals/active');
+
+  // Socket.IO gateway: Engine.IO polling handshake answers on the same port
+  const eio = await fetch(`${base}/socket.io/?EIO=4&transport=polling`);
+  assert.equal(eio.status, 200);
+  const eioBody = await eio.text();
+  assert.ok(eioBody.startsWith('0{'), 'engine.io open packet');
+  assert.ok(eioBody.includes('"sid"'), 'handshake carries a session id');
+  console.log('✓ Socket.IO gateway handshake on the same HTTP server');
+
+  // admin routes are role-gated: plain user → 403
+  const adminDenied = await api('/api/admin/users');
+  assert.equal(adminDenied.status, 403);
+  assert.equal(adminDenied.body.code, 'FORBIDDEN_ROLE');
+  console.log('✓ GET /api/admin/users as plain user → 403 FORBIDDEN_ROLE');
 
   // logout clears cookies; me becomes 401
   const out = await api('/api/auth/logout', { method: 'POST', csrf: true });
@@ -136,6 +181,7 @@ try {
     ]);
     console.log('(test data cleaned up)');
   }
+  socketGateway?.close();
   server?.close();
   await disconnectDb();
 }

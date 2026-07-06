@@ -1,0 +1,125 @@
+// Nigerian banks supported for payouts — `code` is the EXACT bnkCode string the
+// gateway expects (copied verbatim, case-sensitive, from the provider's Nigeria
+// bank-code table); `name` is the display label for the frontend.
+//
+// Where the provider lists duplicate aliases for one institution (e.g. "GTBANK"
+// vs "GUARANTY TRUST BANK PLC", "STERLING BANK" vs "STERLING BANK PLC") we keep
+// ONE canonical code per bank. The provider's table also has hundreds of tiny
+// community MFBs — extend this list as the client requests them.
+
+export const NG_BANKS = [
+  // ── Commercial banks ────────────────────────────────────────────────
+  { code: 'ACCESS BANK PLC', name: 'Access Bank' },
+  { code: 'ACCESS BANK PLC (DIAMOND)', name: 'Access Bank (Diamond)' },
+  { code: 'ALTERNATIVE BANK LIMITED', name: 'The Alternative Bank' },
+  { code: 'Citibank Nigeria', name: 'Citibank Nigeria' },
+  { code: 'ECOBANK NIGERIA PLC', name: 'Ecobank' },
+  { code: 'FIDELITY BANK PLC', name: 'Fidelity Bank' },
+  { code: 'FIRST BANK OF NIGERIA PLC', name: 'First Bank' },
+  { code: 'FIRST CITY MONUMENT BANK', name: 'FCMB' },
+  { code: 'Globus Bank', name: 'Globus Bank' },
+  { code: 'GUARANTY TRUST BANK PLC', name: 'GTBank' },
+  { code: 'HERITAGE BANK', name: 'Heritage Bank' },
+  { code: 'JAIZ BANK', name: 'Jaiz Bank' },
+  { code: 'KEYSTONE BANK PLC', name: 'Keystone Bank' },
+  { code: 'Lotus Bank', name: 'Lotus Bank' },
+  { code: 'Optimus Bank', name: 'Optimus Bank' },
+  { code: 'Parallex Bank', name: 'Parallex Bank' },
+  { code: 'POLARIS BANK', name: 'Polaris Bank' },
+  { code: 'PremiumTrust Bank', name: 'PremiumTrust Bank' },
+  { code: 'Providus Bank', name: 'Providus Bank' },
+  { code: 'Signature Bank', name: 'Signature Bank' },
+  { code: 'STANBIC IBTC BANK PLC', name: 'Stanbic IBTC' },
+  { code: 'STANDARD CHARTERED BANK PLC', name: 'Standard Chartered' },
+  { code: 'STERLING BANK PLC', name: 'Sterling Bank' },
+  { code: 'SUNTRUST BANK', name: 'SunTrust Bank' },
+  { code: 'TAJ BANK', name: 'TAJ Bank' },
+  { code: 'TITAN TRUST BANK', name: 'Titan Trust Bank' },
+  { code: 'UNION BANK OF NIGERIA PLC', name: 'Union Bank' },
+  { code: 'UNITED BANK FOR AFRICA PLC', name: 'UBA' },
+  { code: 'UNITY BANK PLC', name: 'Unity Bank' },
+  { code: 'WEMA BANK PLC', name: 'Wema Bank' },
+  { code: 'Zenith Bank', name: 'Zenith Bank' },
+
+  // ── Merchant banks ──────────────────────────────────────────────────
+  { code: 'Coronation Merchant Bank', name: 'Coronation Merchant Bank' },
+  { code: 'FSDH Merchant Bank', name: 'FSDH Merchant Bank' },
+  { code: 'Rand Merchant Bank', name: 'Rand Merchant Bank' },
+
+  // ── Payment service banks / mobile money ────────────────────────────
+  { code: '9 Payment Service Bank', name: '9PSB' },
+  { code: 'HOPE PSB', name: 'Hope PSB' },
+  { code: 'Money Master PSB', name: 'MoneyMaster PSB' },
+  { code: 'MTN Momo PSB', name: 'MTN MoMo' },
+  { code: 'SMARTCASH', name: 'SmartCash (Airtel)' },
+
+  // ── Fintech / digital banks ─────────────────────────────────────────
+  { code: 'CARBON', name: 'Carbon' },
+  { code: 'Dot Microfinance Bank', name: 'Dot' },
+  { code: 'ENaira', name: 'eNaira' },
+  { code: 'eTranzact PocketMoni', name: 'eTranzact PocketMoni' },
+  { code: 'EYOWO', name: 'Eyowo' },
+  { code: 'Fairmoney Microfinance Bank Ltd', name: 'FairMoney' },
+  { code: 'FirstMonie', name: 'FirstMonie Wallet' },
+  { code: 'GoMoney', name: 'GoMoney' },
+  { code: 'Kuda Microfinance Bank', name: 'Kuda' },
+  { code: 'Moniepoint Microfinance Bank', name: 'Moniepoint' },
+  { code: 'Nomba', name: 'Nomba' },
+  { code: 'NowNow', name: 'NowNow' },
+  { code: 'OPay', name: 'OPay' },
+  { code: 'Paga', name: 'Paga' },
+  { code: 'PalmPay', name: 'PalmPay' },
+  { code: 'Parkway-ReadyCash', name: 'Parkway ReadyCash' },
+  { code: 'Paystack Payments Limited', name: 'Paystack (Titan)' },
+  { code: 'Pocket App', name: 'PocketApp (PiggyVest)' },
+  { code: 'Sparkle', name: 'Sparkle' },
+  { code: 'Tangerine Bank', name: 'Tangerine' },
+  { code: 'Zenith Eazy Wallet', name: 'Zenith Eazy Wallet' },
+
+  // ── Microfinance banks ──────────────────────────────────────────────
+  { code: '9japay Microfinance Bank', name: '9japay MFB' },
+  { code: 'ACCION MICROFINANCE BANK', name: 'Accion MFB' },
+  { code: 'AMJU UNIQUE MICROFINANCE BANK', name: 'Amju Unique MFB' },
+  { code: 'Bainescredit MFB', name: 'BainesCredit MFB' },
+  { code: 'Baobab MFB', name: 'Baobab MFB' },
+  { code: 'Bowen MFB', name: 'Bowen MFB' },
+  { code: 'Branch International Financial Services', name: 'Branch' },
+  { code: 'CEMCS MICROFINANCE BANK', name: 'CEMCS MFB' },
+  { code: 'EKONDO MICROFINANCE BANK', name: 'Ekondo MFB' },
+  { code: 'FINATRUST MICROFINANCE BANK', name: 'FinaTrust MFB' },
+  { code: 'Finca Microfinance Bank', name: 'FINCA MFB' },
+  { code: 'Firmus Microfiance Bank', name: 'Firmus MFB' },
+  { code: 'FORTIS MICROFINANCE BANK', name: 'Fortis MFB' },
+  { code: 'Hackman Microfinance Bank', name: 'Hackman MFB' },
+  { code: 'HASAL MICROFINANCE BANK', name: 'Hasal MFB' },
+  { code: 'IBILE Microfinance Bank', name: 'IBILE MFB' },
+  { code: 'Infinity MFB', name: 'Infinity MFB' },
+  { code: 'KOLOMONI MICROFINANCE BANK', name: 'Kolomoni MFB' },
+  { code: 'La Fayette Microfinance Bank', name: 'Advans La Fayette MFB' },
+  { code: 'LAPO MICROFINANCE BANK', name: 'LAPO MFB' },
+  { code: 'Mainland Microfinance Bank', name: 'Mainland MFB' },
+  { code: 'Mayfair   MFB', name: 'Mayfair MFB' },
+  { code: 'MINT-FINEX MFB', name: 'Mint (Finex) MFB' },
+  { code: 'Mkobo Microfinance Bank', name: 'Mkobo MFB' },
+  { code: 'NIRSAL Microfinance Bank', name: 'NIRSAL MFB' },
+  { code: 'NPF MFB', name: 'NPF MFB' },
+  { code: 'Petra Microfinance Bank', name: 'Petra MFB' },
+  { code: 'Rubies MFB', name: 'Rubies MFB' },
+  { code: 'SAFEHAVEN MFB', name: 'SafeHaven MFB' },
+  { code: 'SPARKLE MICROFINANCE BANK', name: 'Sparkle MFB' },
+  { code: 'TANADI MFB (CRUST)', name: 'Tanadi (Crust) MFB' },
+  { code: 'TCF', name: 'TCF MFB' },
+  { code: 'VFD MICROFINANCE BANK', name: 'VFD (V Bank)' },
+
+  // ── Mortgage / savings & loans ──────────────────────────────────────
+  { code: 'Abbey Mortgage Bank', name: 'Abbey Mortgage Bank' },
+  { code: 'AG Mortgage Bank', name: 'AG Mortgage Bank' },
+  { code: 'ASO Savings and Loans', name: 'ASO Savings & Loans' },
+  { code: 'Haggai Mortgage Bank', name: 'Haggai Mortgage Bank' },
+  { code: 'Infinity Trust Mortgage Bank', name: 'Infinity Trust Mortgage Bank' },
+  { code: 'Jubilee Life Mortgage Bank', name: 'Jubilee Life Mortgage Bank' },
+  { code: 'Lagos Building Investment Company', name: 'LBIC' },
+  { code: 'TRUSTBOND MORTGAGE BANK', name: 'TrustBond Mortgage Bank' },
+];
+
+export const NG_BANK_CODES = NG_BANKS.map((b) => b.code);

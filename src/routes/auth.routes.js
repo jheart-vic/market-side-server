@@ -33,6 +33,13 @@ router.post(
     body: z.object({
       phone: z.string().min(7).max(20),
       email: z.string().email(),
+      username: z
+        .string()
+        .trim()
+        .min(3)
+        .max(30)
+        .regex(/^[a-zA-Z0-9_]+$/, 'letters, numbers, and underscores only'),
+      fullName: z.string().trim().min(2).max(100),
       password,
       referralCode: z.string().trim().min(4).max(12).optional(),
       securityQuestion: z.string().trim().min(8).max(200),

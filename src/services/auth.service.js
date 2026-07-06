@@ -38,6 +38,8 @@ export function toSafeUser(user) {
     id: user.id,
     phone: user.phone.e164,
     email: user.email,
+    username: user.username ?? null,
+    fullName: user.fullName ?? null,
     role: user.role,
     status: user.status,
     kycStatus: user.kyc?.status,
@@ -48,7 +50,7 @@ export function toSafeUser(user) {
   };
 }
 
-/** Find by email or phone. Returns null (not an error) so callers can fail uniformly. */
+/** Find by email, phone, or username. Returns null (not an error) so callers can fail uniformly. */
 async function findByIdentifier(identifier, selectExtra = '') {
   const id = String(identifier ?? '').trim();
   let query;
@@ -58,7 +60,8 @@ async function findByIdentifier(identifier, selectExtra = '') {
     try {
       query = { 'phone.e164': parsePhone(id).e164 };
     } catch {
-      return null;
+      if (!/^[a-zA-Z0-9_]{3,30}$/.test(id)) return null;
+      query = { username: id.toLowerCase() };
     }
   }
   return User.findOne(query).select(selectExtra);
@@ -71,6 +74,8 @@ async function findByIdentifier(identifier, selectExtra = '') {
 export async function register({
   phone,
   email,
+  username,
+  fullName,
   password,
   referralCode,
   securityQuestion,
@@ -83,17 +88,29 @@ export async function register({
 
   const parsedPhone = parsePhone(phone);
   const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedUsername = username ? String(username).trim().toLowerCase() : undefined;
 
   const existing = await User.findOne({
-    $or: [{ 'phone.e164': parsedPhone.e164 }, { email: normalizedEmail }],
+    $or: [
+      { 'phone.e164': parsedPhone.e164 },
+      { email: normalizedEmail },
+      ...(normalizedUsername ? [{ username: normalizedUsername }] : []),
+    ],
   });
-  if (existing) throw ApiError.conflict('An account with that phone or email already exists', 'ACCOUNT_EXISTS');
+  if (existing) {
+    throw ApiError.conflict(
+      'An account with that phone, email, or username already exists',
+      'ACCOUNT_EXISTS',
+    );
+  }
 
   const { referredBy, uplines } = await referralService.resolveReferrer(referralCode);
 
   const user = await User.create({
     phone: parsedPhone,
     email: normalizedEmail,
+    username: normalizedUsername,
+    fullName: fullName ? String(fullName).trim() : undefined,
     passwordHash: await hashValue(password),
     security: {
       question: String(securityQuestion).trim(),
@@ -270,6 +287,15 @@ export async function setWithdrawalPin(user, { pin, totp, password }) {
 
   withSecrets.withdrawalPinHash = await hashValue(String(pin));
   await withSecrets.save();
+}
+
+/** Sensitive-action gate (e.g. withdrawals): when 2FA is on, a valid TOTP is mandatory. */
+export async function requireTotpIfEnabled(user, totp) {
+  const withSecret = await User.findById(user._id ?? user).select('+twoFactor.secret');
+  if (!withSecret?.twoFactor?.enabled) return;
+  if (!(await checkTotp(totp, withSecret.twoFactor.secret))) {
+    throw ApiError.badRequest('Valid authenticator code required', 'INVALID_TOTP');
+  }
 }
 
 export async function verifyWithdrawalPin(user, pin) {

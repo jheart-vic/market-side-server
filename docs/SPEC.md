@@ -47,10 +47,11 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - **Account states** — `active` / `frozen` (admin-controlled); frozen users can log in but cannot transact
 
 ### 2.2 Wallets & Ledger (internal only)
-- Four wallets per user: **NGN, USDT, BTC, ETH**
-- Balances backed by an **immutable double-entry transaction ledger** — every credit/debit (deposit, withdrawal, trade, conversion, signal stake/settlement, referral commission, admin adjustment) is a ledger entry; balances are derived/reconciled from it
+- **The platform is dollar-denominated (client decision 2026-07-06)**: the user's money lives in a **USD balance (stored as micro-USDT)**; Naira is only the funding rail. Deposits auto-convert **NGN → USD** at the live USDT/NGN rate (± configurable spread) the moment they confirm; withdrawals convert **USD → NGN** at the withdrawal-day rate (± spread) before the bank payout. All displayed amounts (balances, stakes, payouts, commissions, P/L) are **dollars**
+- Four wallets per user: **NGN (gateway pass-through), USDT (the primary dollar balance), BTC, ETH**
+- Balances backed by an **immutable double-entry transaction ledger** — every credit/debit (deposit, withdrawal, trade, conversion, signal stake/settlement, referral commission, admin adjustment) is a ledger entry; balances are derived/reconciled from it. Deposit conversion is auditable: the deposit credits NGN and the NGN→USD conversion entries share the same transaction group, so the NGN wallet nets to zero
 - **Money is never stored as floats**: NGN in kobo (integer) and crypto amounts as `Decimal128` (or integer smallest-units)
-- **Conversion** NGN ↔ USDT/BTC/ETH at live cached rates, with a configurable spread/fee
+- **Conversion** USD ↔ BTC/ETH at live cached rates, with a configurable spread/fee; the NGN↔USD conversions at deposit/withdrawal use the same engine
 - Transaction history endpoint with filtering (type, currency, date range) and pagination
 
 ### 2.3 Deposits
@@ -76,18 +77,24 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - Order records: pair, side, amount, price, fee, timestamp, status
 - Trading history per user; **profit/loss computation** (realized per trade + unrealized from open positions) feeding the dashboard "total profit/loss"
 
-### 2.7 Trading Signals
-- Admin-published, fixed-return "contract order" signals; fields: pair, direction, **fixed return %**, min/max stake, duration, release date
-- **Released daily within the 3:00 pm – 5:00 pm window (Africa/Lagos)** — a scheduled job publishes each day's signals; no new signals outside the window
-- **Signals cannot be repeated**: each user may join a given signal **at most once** (enforced by a unique `user + signal` index)
-- Join flow: stake amount debited from the NGN wallet as a held ledger entry → after the signal's duration a settlement job credits **stake + fixed return** back via ledger entries
-- Endpoints: list today's/active signals, join a signal, my signal positions/history
+### 2.7 Trading Signals ("Contract Order" — binary-options mechanic)
+- Admin-published signals are **directional trade tips, not guaranteed returns** — the user wins or loses based on actual price movement (client-confirmed 2026-07-05)
+- Signal fields: pair (**quoted vs NGN**, e.g. BCH/NGN — the signal universe includes BCH beyond the four trading assets; USDT-quoted pairs may be added later), direction (**CALL** = price up / **PUT** = down), **fixed return %**, min/max stake, **contract duration in seconds** (e.g. 60s), **trading window** (Lagos wall-clock, e.g. 18:00–20:00) during which contracts may be placed, release date
+- **Released daily within the 3:00 pm – 5:00 pm window (Africa/Lagos)** — a scheduled job publishes each day's signals; contracts can only be placed inside each signal's own trading window
+- **Placing a contract order**: user stakes **dollars** (platform currency, moved to `held` via ledger) and picks CALL or PUT; the platform snapshots the **entry price** from PriceService at that moment
+- **Settlement** at entry + duration: the job snapshots the **settlement price** and compares against entry:
+  - direction correct → **win**: stake + fixed return % credited via ledger
+  - direction wrong → **loss**: the full stake is forfeited (hold settled out via ledger)
+  - no tie case (client decision 2026-07-05): settlement price equal to entry counts as a loss
+  - both prices are stored on the position so every outcome is provable from our own data
+- **Signals cannot be repeated**: each user may hold a given signal **at most once** (unique `user + signal` index)
+- Endpoints: list today's/active signals, place a contract order, my positions/history
 - Maps to the **"Contract order"** item in the Mine section
 
 ### 2.8 Referral System
 - Unique referral code + shareable link per user
 - **Referral QR code** — the referral link is also exposed as a QR code (server-generated with the `qrcode` package, returned as a data-URL/PNG endpoint) for the frontend to render, download, and share
-- **3-level commissions** (defaults: L1 = 10%, L2 = 2%, L3 = 1% — admin-configurable), paid as ledger entries when qualifying events occur (e.g. deposits or trade fees)
+- **3-level commissions** (defaults: L1 = 10%, L2 = 2%, L3 = 1% — admin-configurable), paid **in the platform dollar currency** as ledger entries when qualifying events occur (e.g. deposits or trade fees)
 - Stats endpoints: total referrals, active referrals, earnings per level
 
 ### 2.9 In-App Notifications

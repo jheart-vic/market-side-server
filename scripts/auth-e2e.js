@@ -36,6 +36,8 @@ try {
   const reg = await auth.register({
     phone: testPhone,
     email: testEmail,
+    username: `e2e_${stamp}`,
+    fullName: 'E2E Test User',
     password: 'Passw0rd!x',
     securityQuestion: 'First pet?',
     securityAnswer: '  Bingo THE dog ',
@@ -47,8 +49,8 @@ try {
   assert.equal(reg.user.email, testEmail);
   assert.match(reg.user.referralCode, /^[2-9A-Z]{8}$/);
   const wallets = await Wallet.find({ user: userId });
-  assert.equal(wallets.length, 4, '4 wallets created');
-  console.log('✓ register (user + 4 wallets + session)');
+  assert.equal(wallets.length, 5, '5 wallets created');
+  console.log('✓ register (user + 5 wallets + session)');
 
   // --- wrong captcha answer rejected ---
   const badCap = await seedCaptcha('login');
@@ -76,6 +78,16 @@ try {
     /Invalid credentials/,
   );
   console.log('✓ wrong password rejected');
+
+  // --- login by username ---
+  const byUsername = await auth.login({
+    identifier: `E2E_${stamp}`, // case-insensitive
+    password: 'Passw0rd!x',
+    ...(await seedCaptcha('login')),
+    meta: { ip: '10.0.0.9', userAgent: 'other-device' },
+  });
+  assert.equal(byUsername.user.username, `e2e_${stamp}`);
+  console.log('✓ login by username');
 
   // --- refresh rotation + replay detection ---
   const r1 = await auth.refresh(login1.refreshToken, meta);

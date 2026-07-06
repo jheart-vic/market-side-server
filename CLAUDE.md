@@ -17,6 +17,7 @@ The **backend** (Express 5 + MongoDB/Mongoose 8, ES modules) for a crypto/NGN tr
 These were explicitly agreed and must not be silently changed (full detail in SPEC.md §1–2):
 
 - **Ledger-first money**: every balance change (deposit, withdrawal, trade, conversion, signal stake/settlement, referral commission, admin adjustment) is an immutable double-entry `LedgerEntry`; balances are derived from the ledger, never mutated directly.
+- **Dollar-denominated platform** (client 2026-07-06): user money is held/displayed in USD (`PLATFORM_CURRENCY = 'USDT'`, micro-units); NGN is only the deposit/withdrawal rail, auto-converting at the live USDT/NGN rate ± admin spread in both directions. Signal stakes, referral commissions, and adjustments are all dollars.
 - **No floats for money**: NGN in kobo (integer); crypto as `Decimal128` or integer smallest-units.
 - **Auth via httpOnly cookies** (access JWT + rotating refresh token), never localStorage tokens; CSRF protection required.
 - **No SMS/OTP anywhere**: human verification is server-generated **svg-captcha** (register, login, password reset); password reset is captcha + **security question**; 2FA is TOTP (Google Authenticator). Alerts go via in-app notifications + email.

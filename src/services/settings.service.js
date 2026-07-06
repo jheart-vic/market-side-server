@@ -23,6 +23,13 @@ export const DEFAULTS = {
   fx_fixed_rate_ngn: 1560, // NGN per USD when fx_mode = 'fixed'
   deposit_spread_pct: 0, // markup on the live rate when users buy USD
   withdrawal_spread_pct: 0, // markdown on the live rate when users sell USD
+  // Spin & Win wheel — 9 prize values in display dollars (strings: money never
+  // floats). Players only ever win the two LOWEST values: every spin pays the
+  // lowest, except each spin_bonus_every-th spin of the Lagos day
+  // platform-wide, which pays the second lowest. The rest are display-only.
+  spin_prizes: ['10', '8', '6', '5', '4', '2', '1', '0.8', '0.5'],
+  spin_bonus_every: 5, // the Nth global spin of the day wins the second-lowest
+  spin_referral_reward: 1, // spin credits the L1 upline earns per direct referral
 };
 
 let cache = null;

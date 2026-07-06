@@ -9,6 +9,7 @@ import announcementRoutes from './announcement.routes.js';
 import marketRoutes from './market.routes.js';
 import tradeRoutes from './trade.routes.js';
 import signalRoutes from './signal.routes.js';
+import spinRoutes from './spin.routes.js';
 import depositRoutes from './deposit.routes.js';
 import withdrawalRoutes from './withdrawal.routes.js';
 import paymentRoutes from './payment.routes.js';
@@ -26,6 +27,7 @@ router.use('/announcements', announcementRoutes);
 router.use('/market', marketRoutes);
 router.use('/trades', tradeRoutes);
 router.use('/signals', signalRoutes);
+router.use('/spin', spinRoutes);
 router.use('/deposits', depositRoutes);
 router.use('/withdrawals', withdrawalRoutes);
 router.use('/payments', paymentRoutes); // gateway webhooks (IP + signature gated)

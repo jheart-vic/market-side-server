@@ -34,6 +34,7 @@ const EFFECTS = {
   'signal_settlement:debit': { balance: 0n, held: -1n }, // consume the stake hold
   'signal_settlement:credit': { balance: 1n, held: 0n }, // stake + fixed return
   'referral_commission:credit': { balance: 1n, held: 0n },
+  'spin_reward:credit': { balance: 1n, held: 0n },
   'admin_adjustment:credit': { balance: 1n, held: 0n },
   'admin_adjustment:debit': { balance: -1n, held: 0n },
 };

@@ -1,4 +1,9 @@
 import * as userService from '../services/user.service.js';
+import * as authService from '../services/auth.service.js';
+import * as tokenService from '../services/token.service.js';
+import * as walletService from '../services/wallet.service.js';
+import * as reportService from '../services/report.service.js';
+import * as spinService from '../services/spin.service.js';
 import * as signalService from '../services/signal.service.js';
 import * as depositService from '../services/deposit.service.js';
 import * as withdrawalService from '../services/withdrawal.service.js';
@@ -11,6 +16,7 @@ import * as notificationService from '../services/notification.service.js';
 import * as auditService from '../services/audit.service.js';
 import { toSmallestUnits, fromSmallestUnits } from '../utils/money.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { ApiError } from '../utils/ApiError.js';
 
 // --- users ---
 
@@ -38,6 +44,31 @@ export const reviewKyc = asyncHandler(async (req, res) => {
 export const getUserTransactions = asyncHandler(async (req, res) => {
   const result = await ledgerService.getHistory(req.validated.params.id, req.validated.query);
   res.json({ success: true, ...result });
+});
+
+// --- impersonation (support tool: browse AS the user; admin routes stay blocked) ---
+
+export const impersonateUser = asyncHandler(async (req, res) => {
+  const { accessToken, user } = await authService.impersonate(req.user, req.validated.params.id, {
+    reason: req.validated.body?.reason,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
+  // Access cookie only — the admin's refresh session survives for the exit
+  tokenService.setAccessCookie(res, accessToken, tokenService.IMPERSONATION_TTL_MS);
+  res.json({ success: true, impersonating: true, expiresInMs: tokenService.IMPERSONATION_TTL_MS, user });
+});
+
+export const exitImpersonation = asyncHandler(async (req, res) => {
+  if (!req.impersonatedBy) {
+    throw ApiError.badRequest('Not currently impersonating', 'NOT_IMPERSONATING');
+  }
+  const { accessToken, user } = await authService.exitImpersonation(req.impersonatedBy, {
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
+  tokenService.setAccessCookie(res, accessToken);
+  res.json({ success: true, impersonating: false, user });
 });
 
 // --- wallet adjustments (always audited ledger entries with a reason) ---
@@ -70,7 +101,31 @@ export const adjustWallet = asyncHandler(async (req, res) => {
     meta: { currency, amount, direction },
   });
 
-  res.status(201).json({ success: true, groupId });
+  const wallet = await walletService.getWallet(userId, currency);
+  const after = toSmallestUnits(wallet.balance, currency);
+  const before = direction === 'credit' ? after - units : after + units;
+  res.status(201).json({
+    success: true,
+    groupId,
+    currency,
+    direction,
+    amount: fromSmallestUnits(units, currency),
+    balanceBefore: fromSmallestUnits(before, currency),
+    balanceAfter: wallet.balance,
+  });
+});
+
+// --- spins (grant credits + activity feed; prizes live in platform settings) ---
+
+export const grantSpins = asyncHandler(async (req, res) => {
+  const { count, reason } = req.validated.body;
+  const result = await spinService.grantCredits(req.user, req.validated.params.id, count, reason);
+  res.status(201).json({ success: true, ...result });
+});
+
+export const listSpins = asyncHandler(async (req, res) => {
+  const result = await spinService.adminList(req.validated.query);
+  res.json({ success: true, ...result });
 });
 
 export const reconcile = asyncHandler(async (req, res) => {
@@ -89,6 +144,17 @@ export const auditFeed = asyncHandler(async (req, res) => {
 export const notifications = asyncHandler(async (req, res) => {
   const { unreadOnly, ...query } = req.validated.query;
   const result = await notificationService.adminList({ unreadOnly: unreadOnly === 'true', ...query });
+  res.json({ success: true, ...result });
+});
+
+// --- reports (dashboard cards + daily chart series) ---
+
+export const reportOverview = asyncHandler(async (req, res) => {
+  res.json({ success: true, report: await reportService.overview(req.validated.query) });
+});
+
+export const reportTimeseries = asyncHandler(async (req, res) => {
+  const result = await reportService.timeseries(req.validated.query);
   res.json({ success: true, ...result });
 });
 

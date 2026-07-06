@@ -31,6 +31,28 @@ export async function signAccessToken(user) {
     .sign(accessSecret);
 }
 
+// --- impersonation (admin support tool) ---------------------------------
+// The token authenticates as the TARGET user but carries the admin's id in the
+// `imp` claim. Only the access cookie is overwritten — the admin's refresh
+// session stays intact, so exit-impersonation (or a plain token refresh)
+// always restores the admin. Shorter lifetime than a normal session.
+export const IMPERSONATION_TTL = '2h';
+export const IMPERSONATION_TTL_MS = 2 * TTL_UNIT_MS.h;
+
+export async function signImpersonationToken(targetUser, admin) {
+  return new SignJWT({ role: targetUser.role, imp: admin.id })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(targetUser.id)
+    .setIssuedAt()
+    .setExpirationTime(IMPERSONATION_TTL)
+    .sign(accessSecret);
+}
+
+/** Overwrite just the access cookie (refresh + csrf untouched). */
+export function setAccessCookie(res, accessToken, ttlMs = accessTtlMs()) {
+  res.cookie(COOKIES.access, accessToken, accessCookieOptions(ttlMs));
+}
+
 export async function createSession(user, { ip, userAgent } = {}) {
   const refreshToken = randomToken(48);
   const session = await Session.create({

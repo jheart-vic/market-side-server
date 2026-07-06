@@ -39,7 +39,7 @@ try {
     username: `e2e_${stamp}`,
     fullName: 'E2E Test User',
     password: 'Passw0rd!x',
-    securityQuestion: 'First pet?',
+    securityQuestionId: 'first-pet-name',
     securityAnswer: '  Bingo THE dog ',
     ...(await seedCaptcha('register')),
     meta,
@@ -98,7 +98,7 @@ try {
 
   // --- security question + password reset ---
   const q = await auth.getSecurityQuestion(testEmail);
-  assert.equal(q.question, 'First pet?');
+  assert.equal(q.question, 'What was the name of your first pet?');
   await assert.rejects(
     auth.resetPassword({ identifier: testEmail, answer: 'wrong answer', newPassword: 'NewPass1!', ...(await seedCaptcha('password_reset')) }),
     /Password reset failed/,

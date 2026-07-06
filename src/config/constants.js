@@ -45,6 +45,7 @@ export const LEDGER_TYPES = [
   'signal_stake',
   'signal_settlement',
   'referral_commission',
+  'spin_reward',
   'admin_adjustment',
 ];
 
@@ -75,6 +76,7 @@ export const NOTIFICATION_TYPES = [
   'signal_released',
   'signal_settled',
   'referral_commission',
+  'spin_reward', // spin prize won / spin credit earned
   'admin_adjustment',
   'announcement',
   'login_alert',

@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { historyQuery } from './transaction.routes.js';
+import { REPORT_METRICS } from '../services/report.service.js';
 import {
   ACCOUNT_STATUS,
   KYC_STATUS,
@@ -24,6 +25,11 @@ const pagination = {
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
 };
+
+// Exit impersonation is called while authenticated AS the target user — the
+// token's `imp` claim (checked in the handler), not the role, authorizes it,
+// so it must sit before the role gate (requireRole rejects impersonated sessions).
+router.post('/impersonation/exit', requireAuth, ctrl.exitImpersonation);
 
 router.use(requireAuth, requireRole('admin'));
 
@@ -66,6 +72,15 @@ router.get(
   validate({ params: idParams, query: historyQuery }),
   ctrl.getUserTransactions,
 );
+// Login AS a user (support): overwrites only the access cookie for 2h
+router.post(
+  '/users/:id/impersonate',
+  validate({
+    params: idParams,
+    body: z.object({ reason: z.string().trim().max(300).optional() }),
+  }),
+  ctrl.impersonateUser,
+);
 
 // --- wallet adjustments ---
 router.post(
@@ -80,6 +95,30 @@ router.post(
     }),
   }),
   ctrl.adjustWallet,
+);
+
+// --- spins (wheel prizes are configured via PUT /settings) ---
+router.post(
+  '/users/:id/spins',
+  validate({
+    params: idParams,
+    body: z.object({
+      count: z.number().int().min(1).max(100),
+      reason: z.string().trim().min(3).max(300),
+    }),
+  }),
+  ctrl.grantSpins,
+);
+router.get(
+  '/spins',
+  validate({
+    query: z.object({
+      day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      user: objectId.optional(),
+      ...pagination,
+    }),
+  }),
+  ctrl.listSpins,
 );
 
 // balance repair is superadmin-only (fix:true rewrites wallet columns)
@@ -108,6 +147,15 @@ router.get(
   '/notifications',
   validate({ query: z.object({ unreadOnly: z.enum(['true', 'false']).optional(), ...pagination }) }),
   ctrl.notifications,
+);
+
+// --- reports ---
+const dateRange = { from: z.coerce.date().optional(), to: z.coerce.date().optional() };
+router.get('/reports/overview', validate({ query: z.object(dateRange) }), ctrl.reportOverview);
+router.get(
+  '/reports/timeseries',
+  validate({ query: z.object({ metric: z.enum(REPORT_METRICS), ...dateRange }) }),
+  ctrl.reportTimeseries,
 );
 
 // --- referral rates ---
@@ -157,6 +205,14 @@ router.put(
       fx_fixed_rate_ngn: z.number().positive().optional(),
       deposit_spread_pct: z.number().min(0).max(20).optional(),
       withdrawal_spread_pct: z.number().min(0).max(20).optional(),
+      // Spin & Win wheel: exactly 9 prize values in display dollars (strings —
+      // money never floats); only the two lowest are ever won
+      spin_prizes: z
+        .array(z.string().regex(/^\d+(\.\d+)?$/, 'display dollars, e.g. "0.5"'))
+        .length(9)
+        .optional(),
+      spin_bonus_every: z.number().int().min(2).max(1000).optional(),
+      spin_referral_reward: z.number().int().min(0).max(10).optional(),
     }),
   }),
   ctrl.updatePlatformSettings,

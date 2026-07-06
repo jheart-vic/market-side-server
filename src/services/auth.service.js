@@ -9,11 +9,14 @@ import { ApiError } from '../utils/ApiError.js';
 import { parsePhone } from '../utils/phone.js';
 import { hashValue, compareValue, normalizeSecurityAnswer } from '../utils/hash.js';
 import { generateUniqueReferralCode } from '../utils/referralCode.js';
+import { getQuestionById } from '../config/securityQuestions.js';
 import * as captchaService from './captcha.service.js';
 import * as tokenService from './token.service.js';
 import * as walletService from './wallet.service.js';
 import * as referralService from './referral.service.js';
 import * as notificationService from './notification.service.js';
+import * as auditService from './audit.service.js';
+import * as spinService from './spin.service.js';
 
 const AUTH_FAILED = () => ApiError.unauthorized('Invalid credentials', 'INVALID_CREDENTIALS');
 
@@ -44,6 +47,7 @@ export function toSafeUser(user) {
     status: user.status,
     kycStatus: user.kyc?.status,
     referralCode: user.referralCode,
+    spinCredits: user.spinCredits ?? 0,
     twoFactorEnabled: user.twoFactor?.enabled ?? false,
     hasWithdrawalPin: Boolean(user.withdrawalPinHash),
     createdAt: user.createdAt,
@@ -78,13 +82,19 @@ export async function register({
   fullName,
   password,
   referralCode,
-  securityQuestion,
+  securityQuestionId,
   securityAnswer,
   captchaId,
   captchaAnswer,
   meta = {},
 }) {
   await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'register');
+
+  // The question must come from the predefined list — users don't invent one
+  const securityQuestion = getQuestionById(securityQuestionId);
+  if (!securityQuestion) {
+    throw ApiError.badRequest('Unknown security question', 'INVALID_SECURITY_QUESTION');
+  }
 
   const parsedPhone = parsePhone(phone);
   const normalizedEmail = String(email).trim().toLowerCase();
@@ -113,7 +123,8 @@ export async function register({
     fullName: fullName ? String(fullName).trim() : undefined,
     passwordHash: await hashValue(password),
     security: {
-      question: String(securityQuestion).trim(),
+      questionId: securityQuestion.id,
+      question: securityQuestion.question,
       answerHash: await hashValue(normalizeSecurityAnswer(securityAnswer)),
     },
     referralCode: await generateUniqueReferralCode(User),
@@ -124,6 +135,9 @@ export async function register({
   });
 
   await walletService.createWalletsForUser(user._id);
+
+  // Direct (L1) referral reward: the referrer earns spin credit(s) on the wheel
+  if (referredBy) await spinService.awardReferralSpin(referredBy, user);
 
   const accessToken = await tokenService.signAccessToken(user);
   const { refreshToken } = await tokenService.createSession(user, meta);
@@ -222,13 +236,17 @@ export async function changePassword(user, { currentPassword, newPassword }) {
   await tokenService.revokeAllForUser(user._id);
 }
 
-export async function changeSecurityQuestion(user, { password, question, answer }) {
+export async function changeSecurityQuestion(user, { password, questionId, answer }) {
+  const question = getQuestionById(questionId);
+  if (!question) throw ApiError.badRequest('Unknown security question', 'INVALID_SECURITY_QUESTION');
+
   const withHash = await User.findById(user._id).select('+passwordHash');
   if (!(await compareValue(password, withHash.passwordHash))) {
     throw ApiError.badRequest('Password is incorrect', 'WRONG_PASSWORD');
   }
   withHash.security = {
-    question: String(question).trim(),
+    questionId: question.id,
+    question: question.question,
     answerHash: await hashValue(normalizeSecurityAnswer(answer)),
   };
   await withHash.save();
@@ -296,6 +314,48 @@ export async function requireTotpIfEnabled(user, totp) {
   if (!(await checkTotp(totp, withSecret.twoFactor.secret))) {
     throw ApiError.badRequest('Valid authenticator code required', 'INVALID_TOTP');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Impersonation (SPEC §2.11 admin support tool) — the admin browses AS a user.
+// A short-lived access token authenticates as the target but carries the
+// admin's id in `imp`; only the access cookie changes, so the admin's refresh
+// session survives and exit (or any token refresh) restores the admin. While
+// the claim is present, requireRole blocks every admin route.
+// ---------------------------------------------------------------------------
+
+export async function impersonate(admin, targetUserId, { reason, ip, userAgent } = {}) {
+  if (String(admin._id) === String(targetUserId)) {
+    throw ApiError.badRequest('You are already logged in as this user', 'IMPERSONATE_SELF');
+  }
+  const target = await User.findById(targetUserId);
+  if (!target) throw ApiError.notFound('User not found', 'USER_NOT_FOUND');
+  // Same rule as freeze/unfreeze: staff accounts are superadmin-only targets
+  if (target.role !== 'user' && admin.role !== 'superadmin') {
+    throw ApiError.forbidden('Only a superadmin can impersonate a staff account', 'FORBIDDEN_TARGET');
+  }
+
+  const accessToken = await tokenService.signImpersonationToken(target, admin);
+  await auditService.record({
+    actor: admin,
+    action: 'user.impersonate',
+    target: { kind: 'User', item: target._id },
+    meta: { reason },
+    ip,
+    userAgent,
+  });
+  return { accessToken, user: toSafeUser(target) };
+}
+
+/** Restore the admin's own session from the token's `imp` claim. */
+export async function exitImpersonation(adminId, { ip, userAgent } = {}) {
+  const admin = await User.findById(adminId);
+  if (!admin || !['admin', 'superadmin'].includes(admin.role) || admin.status !== 'active') {
+    throw ApiError.unauthorized('Admin account is no longer available', 'ADMIN_UNAVAILABLE');
+  }
+  const accessToken = await tokenService.signAccessToken(admin);
+  await auditService.record({ actor: admin, action: 'user.impersonate.exit', ip, userAgent });
+  return { accessToken, user: toSafeUser(admin) };
 }
 
 export async function verifyWithdrawalPin(user, pin) {

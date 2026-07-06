@@ -14,10 +14,12 @@ _Every backend feature we're building, tracked here. Derived from [docs/SPEC.md]
 - [x] **All 15 models** (`src/models/`): User, Wallet, LedgerEntry (immutable), Deposit, Withdrawal, Trade, Signal, SignalPosition, Referral, Notification, Announcement, AuditLog (immutable), Captcha (TTL), Session (refresh tokens), Setting (key/value for runtime config) — _investment plans dropped from scope 2026-07-05_
 - [x] **Utils** (`src/utils/`): money (BigInt smallest-units ↔ Decimal128), phone (E.164), hash (bcryptjs), referralCode, time (Africa/Lagos window), tokens, ApiError, asyncHandler, pagination
 - [x] Smoke test (`npm run smoke`) — model registration + util invariants without a DB
+- [x] **Vitest unit tests** (`npm test`, `tests/*.test.js`) — fast DB-free coverage of money/time/phone/hash/pagination/security-questions/spin-rules; `npm run test:all` = unit → smoke → live e2e
 
 ## 1. Auth & User Accounts (SPEC §2.1)
 _Service layer + HTTP routes done & e2e-tested (`npm run test:auth` = service level, `npm run test:http` = over HTTP with cookies/CSRF)._
 - [x] **Registration** — `POST /api/auth/register` (captcha, E.164, unique username, bcryptjs, security question, referral-tree link, 4 wallets, session cookies); login identifier accepts phone/email/username
+- [x] **Predefined security questions** — users pick by id from `src/config/securityQuestions.js` (10 questions, stable slug ids — NOT runtime-generated, since ids persist on user docs); `GET /api/auth/security-questions` (public) feeds the frontend dropdown; register takes `securityQuestionId`, change takes `questionId`; unknown ids → 400. `User.security.questionId` stored alongside the text (legacy accounts keep free-text only)
 - [x] **Captcha** — `GET /api/auth/captcha?purpose=` → `{ captchaId, svg }`; hashed answer, TTL, single-use (atomic consume), attempt-limited
 - [x] **Login / logout / session** — `POST /api/auth/login` (two-step `requiresTotp` when 2FA on) / `logout` / `refresh` (rotating refresh w/ replay detection) / `GET /me`; httpOnly cookies + CSRF verified over HTTP
 - [~] **Login alerts** — in-app notification on new device/IP done; email pending (no email provider yet)
@@ -86,14 +88,21 @@ _Service layer + HTTP routes done & e2e-tested (`npm run test:auth` = service le
 - [x] User management — `GET /api/admin/users` (q + status/kyc/role filters), `GET /users/:id`, `POST /users/:id/status` (freeze/unfreeze w/ reason)
 - [x] Credit/debit wallets — `POST /api/admin/users/:id/wallet` (currency/direction/amount/reason → audited `admin_adjustment` ledger entry + user notification); `POST /api/admin/reconcile` (superadmin)
 - [x] KYC review — `POST /api/admin/users/:id/kyc` (approve/reject + reason)
-- [ ] Withdrawals queue (approve/reject), deposits view
+- [x] Withdrawals queue (approve/reject) + deposits view — `GET /api/admin/deposits|withdrawals` (status filter), `POST /:id/approve|reject`, `GET /api/admin/payments/balance`
 - [x] Manage trading signals — `/api/admin/signals` CRUD + cancel (auto-refund) + manual release
 - [x] Send announcements — `/api/admin/announcements` CRUD
 - [x] Audit log view — `GET /api/admin/audit` (actor/action/date filters, paginated)
 - [x] Admin notification feed — `GET /api/admin/notifications`
-- [ ] Reports: deposits, withdrawals, trades, signal payouts, referral payouts, user growth
+- [x] Reports: deposits, withdrawals, trades, signal payouts, referral payouts, user growth — `reportService`: `GET /api/admin/reports/overview?from&to` (dashboard cards incl. signal house net + per-level referral payouts) + `GET /api/admin/reports/timeseries?metric=users|deposits|withdrawals|trades|signal_payouts|referral_payouts` (daily Lagos-calendar buckets, count + USD volume)
+- [x] Impersonation (support "login as user") — `POST /api/admin/users/:id/impersonate` (2h access token carrying the admin id in an `imp` claim; only the access cookie is overwritten so the admin's refresh session survives; staff targets superadmin-only; audited) + `POST /api/admin/impersonation/exit` (restores the admin session; mounted before the role gate). While impersonating: `GET /api/auth/me` returns `impersonation.adminId` for the frontend banner and ALL admin routes 403 `IMPERSONATION_ACTIVE`
 - [x] Configure referral commission percentages — `GET|PUT /api/admin/referral-rates` (Setting-persisted, audited)
 - [x] Platform settings — `GET|PUT /api/admin/settings`: min deposit/withdrawal, withdrawal fee tiers, **withdrawal days/hours window**, daily limit, FX mode (live ± spreads / fixed rate) — Setting-persisted, audited
+
+## 11b. Spin & Win (client 2026-07-06)
+- [x] Wheel of 9 admin-configurable prizes (`spin_prizes` in platform settings, display-dollar strings; defaults $10/8/6/5/4/2/1/0.8/0.5). **Players only ever win the two lowest values**: every spin pays the lowest, except each `spin_bonus_every`-th spin (default 5th) of the Lagos day **platform-wide** (atomic `SpinCounter` $inc per dayKey), which pays the second lowest — counter naturally resets every 5 spins (modulo) and every day (new dayKey)
+- [x] Spin credits: earned on **direct (L1) referral registration** (`spin_referral_reward`, default 1, 0 disables; hook in `auth.service.register`) or admin-granted (`POST /api/admin/users/:id/spins {count, reason}` — audited + notified); consumed one per spin via atomic conditional `$inc` (refunded if the spin fails); `spinCredits` exposed in `toSafeUser`
+- [x] Payout via ledger `spin_reward` credit in PLATFORM_CURRENCY + `Spin` row (dayKey, global sequence, bonus flag, `prizeIndex` = wheel segment for the frontend animation) + `spin_reward` notification
+- [x] Endpoints: `GET /api/spin` (prizes in wheel order + credits), `POST /api/spin` (requireActive + transaction limiter → `{prizeIndex, prizeUsd, bonus, creditsLeft}`), `GET /api/spin/history`; admin `GET /api/admin/spins?day=&user=`
 
 ## 12. Security & Cross-Cutting (SPEC §2.12)
 - [x] Stricter rate limits on auth/captcha routes; captcha attempt limiting

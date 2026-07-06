@@ -16,6 +16,7 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function toProfile(user) {
   return {
     ...toSafeUser(user),
+    securityQuestionId: user.security?.questionId ?? null,
     securityQuestion: user.security?.question,
     kyc: {
       status: user.kyc?.status,

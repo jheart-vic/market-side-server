@@ -2,6 +2,7 @@
 // drives the auth + wallet routes over fetch — cookies, CSRF, validation and
 // all. Test data is deleted afterwards. Run with `npm run test:http`.
 import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
 import { app } from '../src/app.js';
 import { initSocket } from '../src/socket/index.js';
 import { connectDb, disconnectDb } from '../src/config/db.js';
@@ -10,7 +11,11 @@ import { User } from '../src/models/User.js';
 import { Wallet } from '../src/models/Wallet.js';
 import { Session } from '../src/models/Session.js';
 import { Notification } from '../src/models/Notification.js';
+import { LedgerEntry } from '../src/models/LedgerEntry.js';
+import { AuditLog } from '../src/models/AuditLog.js';
+import { Spin } from '../src/models/Spin.js';
 import { sha256 } from '../src/utils/tokens.js';
+import { toSmallestUnits, fromSmallestUnits } from '../src/utils/money.js';
 
 async function seedCaptcha(purpose, answer = 'abc12') {
   const c = await Captcha.create({
@@ -51,6 +56,7 @@ async function api(path, { method = 'GET', body, csrf = false } = {}) {
 const stamp = Date.now().toString().slice(-9);
 const testEmail = `http-${stamp}@test.local`;
 let userId;
+let target; // impersonation target, created directly in the DB
 let server;
 let socketGateway;
 
@@ -64,6 +70,13 @@ try {
   const health = await api('/api/health');
   assert.equal(health.status, 200);
   console.log('✓ GET /api/health');
+
+  // predefined security questions (public list the register dropdown renders)
+  const questions = await api('/api/auth/security-questions');
+  assert.equal(questions.status, 200);
+  assert.equal(questions.body.questions.length, 10);
+  assert.ok(questions.body.questions.every((q) => q.id && q.question), 'each has id + text');
+  console.log('✓ GET /api/auth/security-questions (10 predefined, id + text)');
 
   // captcha challenge issue (real one — just checking the shape)
   const cap = await api('/api/auth/captcha?purpose=register');
@@ -86,13 +99,24 @@ try {
       username: `http_${stamp}`,
       fullName: 'HTTP E2E User',
       password: 'Passw0rd!x',
-      securityQuestion: 'Favourite colour?',
+      securityQuestionId: 'first-pet-name',
       securityAnswer: 'blue',
       ...(await seedCaptcha('register')),
     },
   });
   assert.equal(reg.status, 201, JSON.stringify(reg.body));
   userId = reg.body.user.id;
+
+  // free-text / unknown security question is rejected (csrf: cookies exist now)
+  const badQuestion = await api('/api/auth/register', {
+    method: 'POST',
+    csrf: true,
+    body: { securityQuestionId: 'my-own-question' },
+  });
+  assert.equal(badQuestion.status, 400);
+  assert.equal(badQuestion.body.code, 'VALIDATION_ERROR');
+  console.log('✓ register: unknown securityQuestionId → 400');
+
   assert.ok(jar.has('ms_access') && jar.has('ms_refresh') && jar.has('ms_csrf'), 'auth cookies set');
   console.log('✓ POST /api/auth/register → 201 + ms_access/ms_refresh/ms_csrf cookies');
 
@@ -163,6 +187,107 @@ try {
   assert.equal(adminDenied.body.code, 'FORBIDDEN_ROLE');
   console.log('✓ GET /api/admin/users as plain user → 403 FORBIDDEN_ROLE');
 
+  // --- admin suite: promote the test user (requireAuth reloads the user doc
+  // per request, so a DB role change takes effect without re-login) ---
+  await User.updateOne({ _id: userId }, { $set: { role: 'admin' } });
+  const adminUsers = await api('/api/admin/users');
+  assert.equal(adminUsers.status, 200);
+  assert.ok(Array.isArray(adminUsers.body.items));
+  console.log('✓ promoted to admin → GET /api/admin/users 200');
+
+  // reports: overview cards + a time series
+  const overview = await api('/api/admin/reports/overview');
+  assert.equal(overview.status, 200, JSON.stringify(overview.body));
+  assert.ok(overview.body.report.users.total >= 1);
+  for (const key of ['deposits', 'withdrawals', 'trades', 'signals', 'referrals']) {
+    assert.ok(overview.body.report[key], `report has ${key} section`);
+  }
+  const series = await api('/api/admin/reports/timeseries?metric=trades');
+  assert.equal(series.status, 200);
+  assert.ok(Array.isArray(series.body.points));
+  const badMetric = await api('/api/admin/reports/timeseries?metric=nope');
+  assert.equal(badMetric.status, 400);
+  console.log('✓ GET /api/admin/reports/overview + timeseries (bad metric → 400)');
+
+  // wallet adjustment → audited ledger credit with before/after balances
+  const credit = await api(`/api/admin/users/${userId}/wallet`, {
+    method: 'POST',
+    csrf: true,
+    body: { currency: 'USDT', direction: 'credit', amount: '5', reason: 'http e2e credit' },
+  });
+  assert.equal(credit.status, 201, JSON.stringify(credit.body));
+  assert.equal(credit.body.balanceBefore, '0');
+  assert.equal(credit.body.balanceAfter, '5');
+  const usdtWallet = await api('/api/wallets/USDT');
+  assert.equal(usdtWallet.body.wallet.balance, '5');
+  console.log('✓ POST /api/admin/users/:id/wallet credit → ledger entry + before/after balances');
+
+  // Spin & Win: admin grants credits → wheel shows them → spin pays via ledger
+  const grant = await api(`/api/admin/users/${userId}/spins`, {
+    method: 'POST',
+    csrf: true,
+    body: { count: 2, reason: 'http e2e spins' },
+  });
+  assert.equal(grant.status, 201, JSON.stringify(grant.body));
+  assert.equal(grant.body.spinCredits, 2);
+
+  const wheel = await api('/api/spin');
+  assert.equal(wheel.status, 200);
+  assert.equal(wheel.body.wheel.prizes.length, 9);
+  assert.equal(wheel.body.wheel.credits, 2);
+
+  const spun = await api('/api/spin', { method: 'POST', csrf: true });
+  assert.equal(spun.status, 200, JSON.stringify(spun.body));
+  // outcome is always one of the two lowest configured prizes
+  assert.ok(['0.5', '0.8'].includes(spun.body.prizeUsd), `won ${spun.body.prizeUsd}`);
+  assert.equal(spun.body.creditsLeft, 1);
+  assert.ok(spun.body.prizeIndex >= 0 && spun.body.prizeIndex < 9, 'segment index for the wheel');
+
+  const expectedBalance = fromSmallestUnits(
+    toSmallestUnits('5', 'USDT') + toSmallestUnits(spun.body.prizeUsd, 'USDT'),
+    'USDT',
+  );
+  const walletAfterSpin = await api('/api/wallets/USDT');
+  assert.equal(walletAfterSpin.body.wallet.balance, expectedBalance, 'prize paid via ledger');
+
+  const spinHistory = await api('/api/spin/history');
+  assert.equal(spinHistory.body.items.length, 1);
+  const adminSpins = await api('/api/admin/spins');
+  assert.ok(adminSpins.body.items.some((s) => s.id === spun.body.spinId), 'admin feed shows the spin');
+  console.log('✓ spin & win: grant 2 → wheel → spin pays lowest-tier prize via ledger → history + admin feed');
+
+  // impersonation: browse AS the target, admin routes blocked, exit restores
+  target = await User.create({
+    phone: { countryCode: '+234', nationalNumber: '70' + stamp.slice(1), e164: `+23470${stamp.slice(1)}` },
+    email: `imp-${stamp}@test.local`,
+    passwordHash: 'not-a-real-hash',
+    security: { question: 'q?', answerHash: 'not-a-real-hash' },
+    referralCode: `IMP${stamp.slice(-5)}`,
+  });
+  const imp = await api(`/api/admin/users/${target.id}/impersonate`, {
+    method: 'POST',
+    csrf: true,
+    body: { reason: 'support e2e' },
+  });
+  assert.equal(imp.status, 200, JSON.stringify(imp.body));
+  assert.equal(imp.body.impersonating, true);
+  assert.equal(imp.body.user.id, target.id);
+
+  const meImp = await api('/api/auth/me');
+  assert.equal(meImp.body.user.id, target.id, 'authenticated as the target now');
+  assert.equal(meImp.body.impersonation.adminId, userId);
+
+  const blocked = await api('/api/admin/users');
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.code, 'IMPERSONATION_ACTIVE');
+
+  const exitImp = await api('/api/admin/impersonation/exit', { method: 'POST', csrf: true });
+  assert.equal(exitImp.status, 200, JSON.stringify(exitImp.body));
+  const meBack = await api('/api/auth/me');
+  assert.equal(meBack.body.user.id, userId, 'admin session restored');
+  assert.equal(meBack.body.impersonation, null);
+  console.log('✓ impersonate → me is target, admin routes 403 → exit → admin restored');
+
   // logout clears cookies; me becomes 401
   const out = await api('/api/auth/logout', { method: 'POST', csrf: true });
   assert.equal(out.status, 204);
@@ -173,12 +298,18 @@ try {
   console.log('\nALL HTTP E2E CHECKS PASSED');
 } finally {
   if (userId) {
+    const uid = new mongoose.Types.ObjectId(userId);
     await Promise.all([
       User.deleteOne({ _id: userId }),
       Wallet.deleteMany({ user: userId }),
       Session.deleteMany({ user: userId }),
       Notification.deleteMany({ user: userId }),
+      Spin.deleteMany({ user: userId }),
+      // append-only collections: raw driver deleteMany bypasses the immutability hooks
+      LedgerEntry.collection.deleteMany({ user: uid }),
+      AuditLog.collection.deleteMany({ actor: uid }),
     ]);
+    if (target) await User.deleteOne({ _id: target._id });
     console.log('(test data cleaned up)');
   }
   socketGateway?.close();

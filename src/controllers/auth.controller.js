@@ -2,9 +2,14 @@ import * as authService from '../services/auth.service.js';
 import * as captchaService from '../services/captcha.service.js';
 import * as tokenService from '../services/token.service.js';
 import { COOKIES } from '../config/constants.js';
+import { SECURITY_QUESTIONS } from '../config/securityQuestions.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 const meta = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') });
+
+export const listSecurityQuestions = asyncHandler(async (req, res) => {
+  res.json({ success: true, questions: SECURITY_QUESTIONS });
+});
 
 export const getCaptcha = asyncHandler(async (req, res) => {
   const { purpose } = req.validated.query;
@@ -44,7 +49,12 @@ export const logout = asyncHandler(async (req, res) => {
 });
 
 export const me = asyncHandler(async (req, res) => {
-  res.json({ success: true, user: authService.toSafeUser(req.user) });
+  res.json({
+    success: true,
+    user: authService.toSafeUser(req.user),
+    // non-null while an admin is browsing as this user — frontend shows a banner
+    impersonation: req.impersonatedBy ? { adminId: req.impersonatedBy } : null,
+  });
 });
 
 export const getSecurityQuestion = asyncHandler(async (req, res) => {

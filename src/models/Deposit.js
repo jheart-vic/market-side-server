@@ -12,9 +12,12 @@ const depositSchema = new Schema(
     // Our reference sent to the gateway; unique so webhooks are idempotent
     reference: { type: String, required: true, unique: true },
     gatewayReference: { type: String },
-    amount: { type: Schema.Types.Decimal128, required: true }, // kobo
+    amount: { type: Schema.Types.Decimal128, required: true }, // NGN kobo requested
     fee: { type: Schema.Types.Decimal128, default: () => mongoose.Types.Decimal128.fromString('0') },
     currency: { type: String, default: 'NGN' },
+    // Dollar platform: what the user is buying and the rate locked at intent
+    amountUsd: { type: Schema.Types.Decimal128 }, // micro-USDT quoted at intent
+    exchangeRate: { type: Schema.Types.Decimal128 }, // kobo per 1 USD, locked at intent
     status: { type: String, enum: DEPOSIT_STATUS, default: 'pending' },
     channel: { type: String }, // e.g. bank transfer, card
     // Raw webhook payload kept for disputes/audits

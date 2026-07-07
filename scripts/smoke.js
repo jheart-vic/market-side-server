@@ -19,7 +19,7 @@ import { randomToken, sha256 } from '../src/utils/tokens.js';
 const expectedModels = [
   'User', 'Wallet', 'LedgerEntry', 'Deposit', 'Withdrawal', 'Trade', 'Signal',
   'SignalPosition', 'Referral', 'Notification', 'Announcement',
-  'AuditLog', 'Captcha', 'Session',
+  'AuditLog', 'Captcha', 'Session', 'Setting', 'Spin', 'SpinCounter',
 ];
 for (const name of expectedModels) {
   assert.ok(models[name]?.modelName === name, `model ${name} registered`);

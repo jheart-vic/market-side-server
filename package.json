@@ -8,14 +8,19 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "smoke": "node scripts/smoke.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:auth": "node scripts/auth-e2e.js",
-    "test:http": "node scripts/http-e2e.js"
+    "test:http": "node scripts/http-e2e.js",
+    "test:services": "node scripts/services-e2e.js",
+    "test:all": "vitest run && npm run smoke && npm run test:auth && npm run test:http && npm run test:services"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.10.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -25,6 +30,7 @@
     "jose": "^5.9.6",
     "libphonenumber-js": "^1.11.12",
     "mongoose": "^8.8.1",
+    "multer": "^2.2.0",
     "nanoid": "^5.0.8",
     "otplib": "^13.4.1",
     "pino": "^9.5.0",
@@ -35,6 +41,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "pino-pretty": "^13.0.0"
+    "pino-pretty": "^13.0.0",
+    "vitest": "^4.1.10"
   }
 }

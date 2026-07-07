@@ -18,6 +18,9 @@ async function resolveUser(req) {
   }
   const user = await User.findById(payload.sub);
   if (!user) throw ApiError.unauthorized('Account no longer exists', 'USER_GONE');
+  // Impersonation token (admin support tool): the admin's id rides in `imp`.
+  // Handlers can tell a real session from an impersonated one via this flag.
+  req.impersonatedBy = payload.imp ?? null;
   return user;
 }
 

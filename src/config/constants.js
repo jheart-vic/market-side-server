@@ -1,17 +1,29 @@
 // Platform-wide enums and defaults. Referenced by models, services, and validation
 // schemas so string literals live in exactly one place.
 
-export const WALLET_CURRENCIES = ['NGN', 'USDT', 'BTC', 'ETH'];
+export const WALLET_CURRENCIES = ['NGN', 'USDT', 'BTC', 'ETH', 'BNB'];
 
-// Assets tradable against NGN (BNB is tradable but has no wallet — positions live in trades)
-export const TRADE_ASSETS = ['BTC', 'ETH', 'USDT', 'BNB'];
-export const TRADE_PAIRS = TRADE_ASSETS.map((a) => `${a}/NGN`);
+// The platform is dollar-denominated (client 2026-07-06): user money lives in
+// the USDT wallet; NGN is only the deposit/withdrawal rail and auto-converts at
+// the live USDT/NGN rate ± spread. Stakes, payouts, commissions, adjustments,
+// and trades are denominated in this currency (micro-USDT smallest units).
+export const PLATFORM_CURRENCY = 'USDT';
+
+// Spot trading executes against the platform dollar (X/USDT pairs)
+export const TRADE_ASSETS = ['BTC', 'ETH', 'BNB'];
+export const TRADE_PAIRS = TRADE_ASSETS.map((a) => `${a}/${PLATFORM_CURRENCY}`);
+
+// Everything the PriceService quotes: trading assets + USDT (the deposit/
+// withdrawal NGN rate) + signal-only assets like BCH
+export const MARKET_ASSETS = ['BTC', 'ETH', 'USDT', 'BNB', 'BCH'];
 
 export const ROLES = ['user', 'admin', 'superadmin'];
 
 export const ACCOUNT_STATUS = ['active', 'frozen'];
 
 export const KYC_STATUS = ['unverified', 'pending', 'approved', 'rejected'];
+// Accepted identity documents; a live selfie is uploaded as its own file field
+export const KYC_DOC_TYPES = ['passport', 'voters_card', 'nin', 'drivers_license'];
 
 export const DEPOSIT_STATUS = ['pending', 'success', 'failed'];
 export const PAYMENT_GATEWAYS = ['paystack', 'flutterwave'];
@@ -33,10 +45,18 @@ export const LEDGER_TYPES = [
   'signal_stake',
   'signal_settlement',
   'referral_commission',
+  'spin_reward',
   'admin_adjustment',
 ];
 
-export const SIGNAL_DIRECTIONS = ['buy', 'sell'];
+// Contract-order (binary options) signals: CALL = price up, PUT = price down.
+// Signal pairs are quoted vs NGN and include assets beyond the trading set
+// (USDT-quoted pairs may be added later — client 2026-07-05); stakes are in
+// PLATFORM_CURRENCY.
+export const SIGNAL_ASSETS = ['BTC', 'ETH', 'BNB', 'BCH'];
+export const SIGNAL_PAIRS = SIGNAL_ASSETS.map((a) => `${a}/NGN`);
+export const SIGNAL_DIRECTIONS = ['call', 'put'];
+export const SIGNAL_OUTCOMES = ['win', 'lose']; // no tie: unchanged price = lose
 export const SIGNAL_STATUS = ['scheduled', 'released', 'settled', 'cancelled'];
 export const SIGNAL_POSITION_STATUS = ['open', 'settled', 'cancelled'];
 
@@ -56,9 +76,11 @@ export const NOTIFICATION_TYPES = [
   'signal_released',
   'signal_settled',
   'referral_commission',
+  'spin_reward', // spin prize won / spin credit earned
   'admin_adjustment',
   'announcement',
   'login_alert',
+  'kyc_status', // user: KYC approved/rejected
   'withdrawal_pending', // admin
   'kyc_submitted', // admin
   'fraud_flag', // admin

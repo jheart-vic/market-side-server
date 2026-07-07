@@ -32,6 +32,14 @@ export function lagosDayKey(date = new Date()) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+const weekdayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: LAGOS_TZ, weekday: 'long' });
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/** Lagos weekday index, 0 = Sunday … 6 = Saturday. */
+export function lagosWeekday(date = new Date()) {
+  return WEEKDAYS.indexOf(weekdayFormatter.format(date).toLowerCase());
+}
+
 /** True when the instant falls inside the daily signal release window [3pm, 5pm) Lagos time. */
 export function isWithinSignalWindow(date = new Date()) {
   const { hour } = lagosParts(date);

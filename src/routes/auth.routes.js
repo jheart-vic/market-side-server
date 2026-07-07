@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authLimiter, captchaLimiter } from '../middleware/rateLimit.js';
 import { CAPTCHA_PURPOSES } from '../config/constants.js';
+import { SECURITY_QUESTION_IDS } from '../config/securityQuestions.js';
 
 const router = Router();
 
@@ -19,6 +20,9 @@ const totp = z.string().regex(/^\d{6}$/, 'must be a 6-digit code');
 const pin = z.string().regex(/^\d{4,6}$/, 'must be 4-6 digits');
 
 // --- public ---
+// Predefined list the frontend renders as the registration dropdown
+router.get('/security-questions', ctrl.listSecurityQuestions);
+
 router.get(
   '/captcha',
   captchaLimiter,
@@ -33,9 +37,16 @@ router.post(
     body: z.object({
       phone: z.string().min(7).max(20),
       email: z.string().email(),
+      username: z
+        .string()
+        .trim()
+        .min(3)
+        .max(30)
+        .regex(/^[a-zA-Z0-9_]+$/, 'letters, numbers, and underscores only'),
+      fullName: z.string().trim().min(2).max(100),
       password,
       referralCode: z.string().trim().min(4).max(12).optional(),
-      securityQuestion: z.string().trim().min(8).max(200),
+      securityQuestionId: z.enum(SECURITY_QUESTION_IDS),
       securityAnswer: z.string().trim().min(2).max(100),
       ...captchaFields,
     }),
@@ -87,7 +98,7 @@ router.post(
   validate({
     body: z.object({
       password: z.string().min(1),
-      question: z.string().trim().min(8).max(200),
+      questionId: z.enum(SECURITY_QUESTION_IDS),
       answer: z.string().trim().min(2).max(100),
     }),
   }),

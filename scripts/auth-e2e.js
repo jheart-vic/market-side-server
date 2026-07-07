@@ -36,8 +36,10 @@ try {
   const reg = await auth.register({
     phone: testPhone,
     email: testEmail,
+    username: `e2e_${stamp}`,
+    fullName: 'E2E Test User',
     password: 'Passw0rd!x',
-    securityQuestion: 'First pet?',
+    securityQuestionId: 'first-pet-name',
     securityAnswer: '  Bingo THE dog ',
     ...(await seedCaptcha('register')),
     meta,
@@ -47,8 +49,8 @@ try {
   assert.equal(reg.user.email, testEmail);
   assert.match(reg.user.referralCode, /^[2-9A-Z]{8}$/);
   const wallets = await Wallet.find({ user: userId });
-  assert.equal(wallets.length, 4, '4 wallets created');
-  console.log('✓ register (user + 4 wallets + session)');
+  assert.equal(wallets.length, 5, '5 wallets created');
+  console.log('✓ register (user + 5 wallets + session)');
 
   // --- wrong captcha answer rejected ---
   const badCap = await seedCaptcha('login');
@@ -77,6 +79,16 @@ try {
   );
   console.log('✓ wrong password rejected');
 
+  // --- login by username ---
+  const byUsername = await auth.login({
+    identifier: `E2E_${stamp}`, // case-insensitive
+    password: 'Passw0rd!x',
+    ...(await seedCaptcha('login')),
+    meta: { ip: '10.0.0.9', userAgent: 'other-device' },
+  });
+  assert.equal(byUsername.user.username, `e2e_${stamp}`);
+  console.log('✓ login by username');
+
   // --- refresh rotation + replay detection ---
   const r1 = await auth.refresh(login1.refreshToken, meta);
   assert.ok(r1.refreshToken !== login1.refreshToken, 'rotation issues a new token');
@@ -86,7 +98,7 @@ try {
 
   // --- security question + password reset ---
   const q = await auth.getSecurityQuestion(testEmail);
-  assert.equal(q.question, 'First pet?');
+  assert.equal(q.question, 'What was the name of your first pet?');
   await assert.rejects(
     auth.resetPassword({ identifier: testEmail, answer: 'wrong answer', newPassword: 'NewPass1!', ...(await seedCaptcha('password_reset')) }),
     /Password reset failed/,

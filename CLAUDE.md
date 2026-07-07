@@ -17,6 +17,7 @@ The **backend** (Express 5 + MongoDB/Mongoose 8, ES modules) for a crypto/NGN tr
 These were explicitly agreed and must not be silently changed (full detail in SPEC.md §1–2):
 
 - **Ledger-first money**: every balance change (deposit, withdrawal, trade, conversion, signal stake/settlement, referral commission, admin adjustment) is an immutable double-entry `LedgerEntry`; balances are derived from the ledger, never mutated directly.
+- **Dollar-denominated platform** (client 2026-07-06): user money is held/displayed in USD (`PLATFORM_CURRENCY = 'USDT'`, micro-units); NGN is only the deposit/withdrawal rail, auto-converting at the live USDT/NGN rate ± admin spread in both directions. Signal stakes, referral commissions, and adjustments are all dollars.
 - **No floats for money**: NGN in kobo (integer); crypto as `Decimal128` or integer smallest-units.
 - **Auth via httpOnly cookies** (access JWT + rotating refresh token), never localStorage tokens; CSRF protection required.
 - **No SMS/OTP anywhere**: human verification is server-generated **svg-captcha** (register, login, password reset); password reset is captcha + **security question**; 2FA is TOTP (Google Authenticator). Alerts go via in-app notifications + email.
@@ -32,15 +33,17 @@ These were explicitly agreed and must not be silently changed (full detail in SP
 
 - `npm run dev` — start the API with `node --watch` (needs MongoDB reachable at `MONGODB_URI`)
 - `npm start` — start without watch
+- `npm test` — Vitest unit tests (`tests/*.test.js`): pure logic only (money, time, phone, hash, pagination, security questions, spin rules); fast, no DB/network. `npm run test:watch` for watch mode
 - `npm run smoke` — import smoke test: verifies all models register and core utils (money, phone, time, hash) hold their invariants; no DB needed
 - `npm run test:auth` — live e2e of the auth service layer against the `.env` MongoDB (creates + deletes a throwaway user)
-- `npm run test:http` — boots the app on an ephemeral port and drives auth + wallet routes over real HTTP (cookies, CSRF, validation); also self-cleaning
+- `npm run test:http` — boots the app on an ephemeral port and drives auth + wallet + admin routes over real HTTP (cookies, CSRF, validation, impersonation, spins); also self-cleaning
+- `npm run test:all` — unit tests first, then smoke + all live e2e suites
 
 Copy `.env.example` to `.env` for local config. Health check: `GET /api/health`.
 
 ## Code layout notes
 
-- `src/models/index.js` re-exports all 15 models; `src/server.js` imports it to register schemas.
+- `src/models/index.js` re-exports all 17 models; `src/server.js` imports it to register schemas.
 - All money amounts are **BigInt integer smallest units** (kobo, micro-USDT, satoshi, wei) persisted as `Decimal128` — convert only via [src/utils/money.js](src/utils/money.js) (`toSmallestUnits` / `fromSmallestUnits` / `bigIntToDecimal128` / `decimal128ToBigInt`). Wallet balances must only change together with `LedgerEntry` rows.
 - `LedgerEntry` and `AuditLog` schemas block all updates/deletes via pre-hooks — they are append-only by construction.
 - Enums/statuses live in [src/config/constants.js](src/config/constants.js); env is zod-validated in [src/config/env.js](src/config/env.js) (production refuses dev-default JWT secrets).

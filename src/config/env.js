@@ -17,6 +17,15 @@ const schema = z
     BCRYPT_ROUNDS: z.coerce.number().int().min(8).max(15).default(10),
     CAPTCHA_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     CAPTCHA_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    // Cloudinary (KYC document uploads — private assets, signed delivery)
+    CLOUDINARY_CLOUD_NAME: z.string().optional(),
+    CLOUDINARY_API_KEY: z.string().optional(),
+    CLOUDINARY_API_SECRET: z.string().optional(),
+    // Price provider (PriceService — CoinGecko seed, swappable)
+    COINGECKO_BASE_URL: z.string().url().default('https://api.coingecko.com/api/v3'),
+    COINGECKO_API_KEY: z.string().optional(), // demo/pro key; optional for the free tier
+    PRICE_REFRESH_SECONDS: z.coerce.number().int().positive().default(30),
+    TRADE_FEE_PCT: z.coerce.number().min(0).max(10).default(0.1), // spot trade fee, percent
     // Payment gateway (deposits/withdrawals)
     PG_BASE_URL: z.string().url().optional(),
     PG_MERCHANT_ID: z.string().optional(),

@@ -3,12 +3,16 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { connectDb, disconnectDb } from './config/db.js';
 import { logger } from './config/logger.js';
+import { startJobs, stopJobs } from './jobs/index.js';
+import { initSocket } from './socket/index.js';
 import './models/index.js'; // register all schemas up front
 
 const server = http.createServer(app);
+const socketGateway = initSocket(server);
 
 async function start() {
   await connectDb();
+  startJobs();
   server.listen(env.PORT, () => {
     logger.info(`API listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
   });
@@ -16,6 +20,8 @@ async function start() {
 
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutting down');
+  stopJobs();
+  socketGateway.close();
   server.close(async () => {
     await disconnectDb();
     process.exit(0);

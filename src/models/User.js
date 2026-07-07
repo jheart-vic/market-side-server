@@ -21,10 +21,18 @@ const userSchema = new Schema(
       e164: { type: String, required: true, unique: true }, // canonical unique key
     },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    // Display handle; unique when set (sparse: accounts created before the field
+    // existed have none and can add one via PATCH /users/me)
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
+    fullName: { type: String, trim: true },
     passwordHash: { type: String, required: true, select: false },
 
-    // Password reset is captcha + security question (no SMS/email OTP)
+    // Password reset is captcha + security question (no SMS/email OTP).
+    // The question is picked from the predefined list in
+    // config/securityQuestions.js; questionId is its stable slug (accounts
+    // created before the list existed have free-text question only).
     security: {
+      questionId: { type: String, default: null },
       question: { type: String, required: true },
       answerHash: { type: String, required: true, select: false },
     },
@@ -44,8 +52,10 @@ const userSchema = new Schema(
       status: { type: String, enum: KYC_STATUS, default: 'unverified' },
       documents: [
         {
-          kind: String, // e.g. "national_id", "utility_bill"
-          url: String,
+          kind: String, // KYC_DOC_TYPES or "selfie"
+          url: String, // provider URL (private assets need a signed URL to view)
+          publicId: String, // Cloudinary public_id — used for signed delivery + deletion
+          resourceType: { type: String, enum: ['image', 'raw'], default: 'image' }, // raw = PDF
           uploadedAt: { type: Date, default: Date.now },
         },
       ],
@@ -60,6 +70,10 @@ const userSchema = new Schema(
     // Referral ancestors, nearest first: uplines[0] = L1, [1] = L2, [2] = L3.
     // Denormalized at registration so commission payout never walks the tree.
     uplines: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+
+    // Spin & Win tickets — earned on direct (L1) referral registrations or
+    // granted by an admin; consumed one per spin (atomic conditional $inc)
+    spinCredits: { type: Number, default: 0, min: 0 },
 
     // Login-alert baseline: alert (in-app + email) when a login doesn't match any known device
     knownDevices: { type: [knownDeviceSchema], default: [], select: false },

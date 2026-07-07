@@ -12,3 +12,6 @@ export { Announcement } from './Announcement.js';
 export { AuditLog } from './AuditLog.js';
 export { Captcha } from './Captcha.js';
 export { Session } from './Session.js';
+export { Setting } from './Setting.js';
+export { Spin } from './Spin.js';
+export { SpinCounter } from './SpinCounter.js';

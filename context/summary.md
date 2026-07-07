@@ -2,7 +2,10 @@
 
 _Persistent progress snapshot so any session (even after `/clear`) can pick up where we left off. Keep this updated when meaningful progress is made. Granular per-feature checkboxes live in [feature.md](feature.md); decisions history in [session.md](session.md); the authoritative spec is [../docs/SPEC.md](../docs/SPEC.md)._
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-07
+
+> **💵 Money model (client 2026-07-06):** the platform is **dollar-denominated** — `PLATFORM_CURRENCY='USDT'` (micro-units). NGN is only the deposit/withdrawal rail: deposit NGN → auto-convert to USD at live USDT/NGN rate ± spread (one ledger group, NGN wallet nets to zero); withdrawal converts USD → NGN before payout. Signal stakes, referral commissions, adjustments: all dollars.
+> **🎯 Signals (client 2026-07-05):** binary options, NOT guaranteed returns — user picks CALL/PUT, entry & settle prices snapshotted, right = stake + return %, wrong/unchanged = full stake lost. Pairs vs NGN incl. BCH; durations in seconds; per-signal trading window.
 
 ## ✅ Done
 
@@ -20,13 +23,14 @@ _Persistent progress snapshot so any session (even after `/clear`) can pick up w
 - `money.js` — **core money invariant**: BigInt integer smallest units (kobo/micro-USDT/satoshi/wei) ↔ Decimal128; `toSmallestUnits`, `fromSmallestUnits`, `percentOf`, no floats ever
 - `phone.js` (E.164 via libphonenumber-js) · `hash.js` (bcryptjs + security-answer normalization) · `referralCode.js` (8-char unambiguous nanoid) · `time.js` (Africa/Lagos parts, `lagosDayKey`, `isWithinSignalWindow`) · `tokens.js` (random token + sha256) · `ApiError.js` · `asyncHandler.js` · `pagination.js`
 
-### Models (`src/models/`, 14 total, barrel in `index.js`) — _investment plans dropped from scope 2026-07-05 (no Plan model)_
-User (phone.e164 unique, security question, withdrawalPinHash, TOTP secret, KYC, referralCode + uplines[3], knownDevices) · Wallet (user+currency unique, balance + held) · **LedgerEntry (immutable — pre-hooks block update/delete; groupId pairs double entries; balanceAfter)** · Deposit (unique reference, webhook meta) · Withdrawal (bank details, hold/settlement ledger groups) · Trade (pair/side/legs/price/fee/realizedPnl) · Signal (returnPct, min/maxStake, durationMinutes, releaseDay) · SignalPosition (**unique user+signal**, settlesAt sweep index) · Referral (commission records; tree lives on User) · Notification (audience user/admin) · Announcement · **AuditLog (immutable)** · Captcha (TTL index) · Session (hashed rotating refresh tokens, reuse detection)
+### Models (`src/models/`, 17 total, barrel in `index.js`) — _investment plans dropped from scope 2026-07-05 (no Plan model)_
+User (phone.e164 unique, security question, withdrawalPinHash, TOTP secret, KYC, referralCode + uplines[3], knownDevices) · Wallet (user+currency unique, balance + held) · **LedgerEntry (immutable — pre-hooks block update/delete; groupId pairs double entries; balanceAfter)** · Deposit (unique reference, webhook meta) · Withdrawal (bank details, hold/settlement ledger groups) · Trade (pair/side/legs/price/fee/realizedPnl) · Signal (returnPct, min/maxStake, durationMinutes, releaseDay) · SignalPosition (**unique user+signal**, settlesAt sweep index) · Referral (commission records; tree lives on User) · Notification (audience user/admin) · Announcement · **AuditLog (immutable)** · Captcha (TTL index) · Session (hashed rotating refresh tokens, reuse detection) · Setting (key/value runtime config, e.g. referral rates) · **Spin** (dayKey + global sequence + bonus flag + prizeIndex + amount) · **SpinCounter** (per-Lagos-day atomic counter driving the every-Nth-spin bonus)
 
 ### App shell
 - `src/app.js` — helmet, CORS (credentials), cookie-parser, pino-http, general rate limiter, global CSRF, `trust proxy` (prod), `GET /api/health`, notFound + errorHandler
 - `src/server.js` — connect DB, graceful shutdown
-- `scripts/smoke.js` — verifies 14 models register + util invariants, no DB needed
+- `scripts/smoke.js` — verifies 17 models register + util invariants, no DB needed
+- **Vitest unit layer** (`npm test`, `vitest.config.js`, `tests/*.test.js` — 9 files / 38 tests, no DB or network): money invariants, Lagos time math, phone E.164, bcrypt + answer normalization, tokens, pagination, predefined security questions, spin outcome rules. `npm run test:all` chains unit → smoke → all live e2e suites. Chosen over node:test so the React frontend repo can share the same framework
 
 ### Middleware (`src/middleware/`, barrel in `index.js`)
 - `auth.js` — `requireAuth` (verifies `ms_access` httpOnly cookie with jose, loads `req.user`), `optionalAuth`, `requireActive` (frozen users can't transact)
@@ -43,28 +47,63 @@ User (phone.e164 unique, security question, withdrawalPinHash, TOTP secret, KYC,
 **Implemented & e2e-tested (`npm run test:auth` — live against Atlas, self-cleaning):**
 - `captcha.service` — svg-captcha; hashed answer, TTL, single-use atomic consume, attempt-limited
 - `token.service` — jose access JWT; rotating refresh sessions (hashed, replay detection revokes session); `setAuthCookies`/`clearAuthCookies` via utils/cookies
-- `auth.service` — register (captcha → E.164 → bcryptjs → referral link → 4 wallets → session), login (captcha, `{requiresTotp:true}` two-step when 2FA on, new-device in-app alert), refresh/logout, security-question reset (normalized answers, uniform RESET_FAILED, revokes all sessions), changePassword/Question, 2FA via **otplib v13** (top-level `generate/verify/generateURI`, `epochTolerance: 60` — v13 has NO `authenticator` export, plugin-based), withdrawal PIN (TOTP-if-2FA-else-password)
+- `auth.service` — register (captcha → E.164 → **unique username (sparse — pre-existing accounts may lack one)** → bcryptjs → referral link → 4 wallets → session), login (identifier = phone/email/**username**, captcha, `{requiresTotp:true}` two-step when 2FA on, new-device in-app alert), refresh/logout, security-question reset (normalized answers, uniform RESET_FAILED, revokes all sessions), changePassword/Question, 2FA via **otplib v13** (top-level `generate/verify/generateURI`, `epochTolerance: 60` — v13 has NO `authenticator` export, plugin-based), withdrawal PIN (TOTP-if-2FA-else-password)
 - `wallet.service` — createWalletsForUser (idempotent), getWallets/getWallet display amounts
-- `referral.service` — `resolveReferrer` only (tree link); commissions/QR/stats TODO
-- `notification.service` — `notifyUser`/`notifyAdmins` persist only; Socket.IO bind + list/markRead TODO
 
-**Still stubs:** user, ledger, price, trade, signal, payment, deposit, withdrawal, announcement, audit (read each file's header for the planned API).
+**Implemented & e2e-tested (`npm run test:services` — live against Atlas incl. Mongo transactions + live CoinGecko, self-cleaning):**
+- `ledger.service` — **the only place balances change**: `post()` core (N entries sharing a groupId + wallet updates in one Mongo transaction), `credit`/`debit`/`hold`/`releaseHold`/`settleHold`/`convert` wrappers, `getHistory` (filters + pagination, display strings), `reconcile` (replays the `EFFECTS` table mapping each `(type, direction)` → balance/held deltas). Accepts an outer `session` for composition
+- `user.service` — `getProfile`/`updateProfile` (email only), `submitKyc`/`reviewKyc` (pending → approved/rejected, admin notification + audit + user `kyc_status` notification), `setAccountStatus` (freeze/unfreeze, staff targets superadmin-only, audited), `searchUsers`
+- `referral.service` — `resolveReferrer`, `payCommissions` (L1–L3 NGN via ledger + Referral rows + notifications), `getStats`, `getShareLink`/`getQrCode` (data-URL PNG), `getRates`/`setRates` (persisted in **Setting**, in-process cache, audited)
+- `notification.service` — `notifyUser`/`notifyAdmins` (+ Socket.IO emit when `bindSocketServer(io)` has been called; rooms `user:<id>` / `admins`), `broadcast`, `list`/`adminList` (unread counts), `markRead`/`markAllRead`
+- `announcement.service` — admin create/update/remove (audited), publish fan-out (broadcast + batched per-user Notification rows), `listPublished`/`adminList`
+- `audit.service` — `record` (append-only), `feed` (actor/action/date filters), `flagFraud`
+- `price.service` — CoinGecko provider (`COINGECKO_BASE_URL`/`COINGECKO_API_KEY` env), NGN-quoted, in-process cache (`PRICE_REFRESH_SECONDS`, stale-while-revalidate, serves stale on outage), `getPrices`/`getPrice` (display strings), **`getPriceKobo` (BigInt for money math)**, `getOhlc` (60s cache), `getDepth` (501 — provider has no order book), `refreshCache` + `onPriceUpdate` for the job/socket gateway
+
+- `trade.service` — instant spot fills at cached price, **dollar-quoted pairs (BTC/ETH/BNB vs USDT)**: buy spends $, sell returns $; ledger legs + `TRADE_FEE_PCT` fee + Trade row + **FIFO cost basis** (`remainingBase`) in one Mongo transaction; `getHistory`, `getPnl` (realized + unrealized). Base acquired outside trades (conversions) sells at zero cost basis
+- `signal.service` — full binary-options engine: admin `createSignal/updateSignal(scheduled only)/cancelSignal(auto-refunds)`, `releaseDueSignals` (3–5 pm Lagos gate, `force` override), `placeOrder` (window check, stake bounds, $ hold + NGN entry-price snapshot in one txn, unique user+signal), `settleDuePositions` (settle-price snapshot → win stake+return% / lose forfeits; equal price = lose), `listActive`, `getPositions`
+- `src/jobs/index.js` — overlap-guarded intervals: price refresh (`PRICE_REFRESH_SECONDS`), signal release (60s), settlement sweep (5s); started in server.js, not in tests (app.js doesn't start jobs)
+
+- `payment.service` — **Beidou gateway client** (mirrors the client's sister project): MD5 signing (ASCII-sorted `k=v&…&secret`), `verifyCallback` against the **raw body** (JSON.parse kills `100.00` — `req.rawBody` captured in app.js), collection/payout create+query, `getBalance`. Callback replies must be literal `success`. `MS`-prefixed order IDs (merchant account shared with the sister project)
+- `settings.service` — admin knobs in one Setting row over code defaults: min deposit/withdrawal, withdrawal fee tiers (below/above threshold), **withdrawal days/hours (Lagos)**, daily limit, `fx_mode` live±spread / fixed rate, **spin knobs** (`spin_prizes` ×9, `spin_bonus_every`, `spin_referral_reward`)
+- `spin.service` — Spin & Win engine: `getWheel`, `spin` (atomic credit consume → global daily counter → lowest/second-lowest decision → ledger `spin_reward` payout → Spin row + notification, credit refunded on failure), `getHistory`, `awardReferralSpin` (L1 hook), `grantCredits` (admin, audited), `adminList`
+- `report.service` — admin analytics: `overview` (dashboard cards) + `timeseries` (daily Lagos buckets), Decimal128 aggregations → display strings
+- `fx.service` — `usdNgnRateKobo('deposit'|'withdrawal')` BigInt kobo/$ + conversion helpers
+- `deposit.service` — intent (rate locked, whole-naira order, checkout `payUrl`) → idempotent callback credit: actual paid NGN → one ledger group NGN→USD (nets zero) + referral commission on USD + notify; admin list/manual approve/reject
+- `withdrawal.service` — PIN + TOTP-if-2FA, Lagos window + daily limit + tiered fee, gross $ held, whole-naira payout auto-submitted (fail → instant refund); callback settles/refunds hold; admin list/approve/reject; `listBanks` (curated gateway codes in `config/ngBanks.js`)
+
+**⚠ Live gateway untested** — needs real `PG_BASE_URL/PG_MERCHANT_ID/PG_SECRET_KEY`, `PG_CALLBACK_BASE_URL` (public), `PG_CALLBACK_IPS`. Remaining stub: none — all 20 services implemented.
 
 ### HTTP layer (`src/controllers/`, `src/routes/`) — auth + wallets live, verified by `npm run test:http`
 - `routes/index.js` mounted at `/api` in app.js; zod schemas co-located in route files; handlers read validated query/params from `req.validated`
+- **Security questions are predefined** (client 2026-07-06): 10 questions with **stable slug ids** in `src/config/securityQuestions.js` (never runtime-generated — ids persist on user docs); `GET /api/auth/security-questions` (public) feeds the frontend dropdown; register takes `securityQuestionId`, `POST /security-question/change` takes `questionId`; `User.security.questionId` stored beside the text
+- **Spin & Win** (client 2026-07-06): `GET/POST /api/spin` + `GET /api/spin/history`; 9 admin-configurable prizes (settings `spin_prizes`, display-dollar strings) but **only the two lowest are ever won** — lowest every spin, second-lowest on each `spin_bonus_every`-th (default 5th) spin of the Lagos day **platform-wide** (atomic `SpinCounter`; modulo = resets every cycle and every day). Credits: 1 per **direct L1 referral registration** (`spin_referral_reward`, hook in register) or admin grant `POST /api/admin/users/:id/spins` (audited); consumed by atomic conditional `$inc` with refund-on-failure; paid via ledger `spin_reward` + `Spin` row; response carries `prizeIndex` (wheel segment) for the frontend circle animation; admin feed `GET /api/admin/spins?day=&user=`
 - **Auth** (`/api/auth`): `GET /captcha?purpose=`, `POST /register`, `POST /login` (returns `{requiresTotp:true}` for 2FA step), `POST /refresh`, `POST /logout`, `GET /me`, `GET /security-question?identifier=`, `POST /reset-password`, `POST /change-password`, `POST /security-question/change`, `POST /2fa/enable|confirm|disable`, `POST /withdrawal-pin` — auth/captcha rate limits applied
 - **Wallets** (`/api/wallets`): `GET /` and `GET /:currency` (requireAuth)
-- `npm run test:http` boots the app on an ephemeral port and verifies over real HTTP: cookies set/cleared, CSRF 403 without header, refresh rotation, validation 400s, wallet reads (self-cleaning)
+- **Users** (`/api/users`): `GET /me` (full profile incl. KYC docs as 15-min signed URLs), `PATCH /me` (email/username/fullName), `POST /kyc` — multipart (`docType` + `document`×2 + optional `selfie`) → **Cloudinary v2 private uploads** (`utils/cloudinary.js`: upload_stream direct from buffer, no streamifier; images limited 1920px + quality:auto, PDFs raw; `type:'private'` so viewing needs `getSignedUrl`); multer memory storage w/ mime filter + 10MB cap in `middleware/upload.js`; failed submit or resubmission cleans up assets. Env: `CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET` (503 UPLOADS_UNAVAILABLE when unset)
+- **Transactions** (`/api/transactions`): `GET /` — own ledger history (type/currency/from/to filters, paginated)
+- **Referrals** (`/api/referrals`): `GET /stats`, `GET /link`, `GET /qr` (requireAuth)
+- **Notifications** (`/api/notifications`): `GET /?unreadOnly=`, `POST /:id/read`, `POST /read-all`
+- **Announcements** (`/api/announcements`): `GET /` (public, published latest-first)
+- **Market** (`/api/market`, public): `GET /prices`, `GET /prices/:asset`, `GET /ohlc/:asset?days=` (USD candles), `GET /depth/:asset` (501) — assets BTC/ETH/USDT/BNB/BCH; quotes are dollar-first `{asset, priceUsd, priceNgn, change24hPct, volume24hUsd}`; USDT's `priceNgn` is the deposit/withdrawal rate
+- **Trades** (`/api/trades`): `POST /` (asset BTC/ETH/BNB, side, amount — $ for buys, qty for sells; requireActive + transaction limiter), `GET /` history, `GET /pnl`
+- **Signals** (`/api/signals`): `GET /active`, `GET /positions`, `POST /:id/orders {stake, direction}` (requireActive + transaction limiter)
+- **Admin signals** (`/api/admin/signals`): create/list?day=/patch (scheduled only)/`POST /:id/cancel` (refunds)/`POST /release {force}`
+- **Admin** (`/api/admin`, requireAuth + requireRole('admin'); superadmin passes all): `GET /users` (search+filters), `GET /users/:id`, `POST /users/:id/status` (freeze/unfreeze), `POST /users/:id/kyc` (approve/reject), `GET /users/:id/transactions`, `POST /users/:id/wallet` (credit/debit adjustment: display-units amount + reason → audited `admin_adjustment` ledger entry + user notification; responds with balanceBefore/balanceAfter), `POST /reconcile` (**superadmin only** — fix:true rewrites wallets), `GET /audit`, `GET /notifications`, `GET|PUT /referral-rates`, announcements CRUD (`POST|GET /announcements`, `PATCH|DELETE /announcements/:id`)
+- **Admin impersonation** ("login as user" support tool): `POST /api/admin/users/:id/impersonate {reason?}` → 2h jose access token with `sub=target`, `imp=adminId`; **only the access cookie is overwritten** — the admin's refresh session survives, so `POST /api/admin/impersonation/exit` (mounted before the role gate — the `imp` claim authorizes it) or any `/api/auth/refresh` restores the admin. Staff targets superadmin-only (mirrors freeze rule); start/exit audited (`user.impersonate[.exit]`); `requireAuth` sets `req.impersonatedBy`, `GET /api/auth/me` returns `impersonation.adminId` (frontend banner), and `requireRole` 403s every admin route with `IMPERSONATION_ACTIVE` while the claim is present
+- **Admin reports** (`reportService`): `GET /api/admin/reports/overview?from&to` — users (total/new/frozen/KYC-pending), deposits & withdrawals by status (+fees), trade count/volume/fees, signals (open stakes, settled wins/losses, paid out, **house net**), referral payouts per level; `GET /api/admin/reports/timeseries?metric=users|deposits|withdrawals|trades|signal_payouts|referral_payouts&from&to` — daily Lagos-calendar buckets (count + USD volume), default last 30 days. All sums are Decimal128 smallest-units aggregations returned as display strings
+- User model now also has **username** (unique sparse, login identifier) and **fullName** (display) — both required at register, editable via `PATCH /users/me`
+- `npm run test:http` boots the app on an ephemeral port and verifies over real HTTP: cookies set/cleared, CSRF 403 without header, refresh rotation, validation 400s, wallet reads, profile/transactions/notifications/referral-QR/announcements reads, admin 403 for plain users, then promotes the test user to admin and covers reports (overview + timeseries), wallet credit with before/after balances, and the full impersonation round-trip (me = target → admin routes 403 → exit → admin restored). Cleans up ledger/audit rows via raw-driver deletes (immutability hooks bypass)
 - Email for login alerts still pending (no provider)
 
 ## ⚠️ Pending / verification status
-- ✅ `npm install` done (175 packages) and `npm run smoke` **passes** (15 models register, util invariants hold)
+- ✅ `npm install` done and `npm run smoke` **passes** (17 models register, util invariants hold); `npm test` (Vitest, 38 unit tests) **passes**
 - ⏳ `npm run dev` + `GET /api/health` not yet exercised — needs a `.env` file first (dotenv loads `.env`, not `.env.example`, so the Atlas URI currently isn't picked up and the server would try local Mongo)
 - ⚠️ **Security**: real credentials (Atlas URI, `PG_SECRET_KEY`, JWT secrets) are sitting in `.env.example`, which is a committed file — move them to `.env` (gitignored) and put placeholders back in `.env.example`; rotate the exposed secrets
 
-## 🔜 Not started (build order suggestion)
-1. **Auth domain**: CaptchaService (svg-captcha) → register (captcha, E.164, referral-tree link, wallets init) → login/logout/refresh (Session rotation, httpOnly cookies, CSRF) → security-question password reset → TOTP 2FA → withdrawal PIN
-2. **LedgerService** (the one place balances change; Mongo transactions) + wallets/transaction-history endpoints + NGN↔crypto conversion
-3. **Deposits** (yoyopays intent + webhook w/ IP allowlist `PG_CALLBACK_IPS`) → **Withdrawals** (hold/escrow, admin approve/auto-approve/reject, payout)
-4. **Market data** (PriceService + cache + Socket.IO) → **Trading** → **Signals** (release job 3–5 pm WAT + settlement sweep)
-5. **Referrals** (commissions on qualifying events, QR endpoint) → **Notifications** (NotificationService + Socket.IO) → **Announcements** → **Admin API** (users, audit-log feed, reports) → **Jobs** wiring
+## 🔜 Remaining
+0. _(note: registration now creates **5 wallets** — BNB added for spot trading)_
+1. **Live gateway verification** — fill real `PG_*` env values, expose the API publicly (or tunnel), run a ₦-real deposit + withdrawal end-to-end
+2. ~~Socket gateway~~ — **done**: `src/socket/index.js` (attached in server.js; ms_access-cookie JWT handshake, anonymous = public events only; rooms `user:<id>` + `admins`; emits `prices`/`notification`/`announcement`/`signal_released`; Engine.IO handshake covered in `npm run test:http`)
+3. ~~Admin reports~~ — **done** (`report.service.js`, overview + timeseries); email provider for login alerts still pending
+4. Optional hardening: withdrawal review-queue mode (manual approve before gateway submit), payment status polling job as callback fallback, anti-fraud velocity rules
+

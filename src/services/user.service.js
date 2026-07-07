@@ -24,6 +24,7 @@ function toProfile(user) {
       documents: (user.kyc?.documents ?? []).map((d) => ({
         kind: d.kind,
         url: d.publicId ? getSignedUrl(d.publicId, d.resourceType) : d.url,
+        resourceType: d.resourceType, // 'raw' = PDF — download URLs hide the extension
         uploadedAt: d.uploadedAt,
       })),
       submittedAt: user.kyc?.submittedAt,

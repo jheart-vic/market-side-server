@@ -2,7 +2,7 @@
 
 _Persistent progress snapshot so any session (even after `/clear`) can pick up where we left off. Keep this updated when meaningful progress is made. Granular per-feature checkboxes live in [feature.md](feature.md); decisions history in [session.md](session.md); the authoritative spec is [../docs/SPEC.md](../docs/SPEC.md)._
 
-**Last updated:** 2026-07-06
+**Last updated:** 2026-07-07
 
 > **💵 Money model (client 2026-07-06):** the platform is **dollar-denominated** — `PLATFORM_CURRENCY='USDT'` (micro-units). NGN is only the deposit/withdrawal rail: deposit NGN → auto-convert to USD at live USDT/NGN rate ± spread (one ledger group, NGN wallet nets to zero); withdrawal converts USD → NGN before payout. Signal stakes, referral commissions, adjustments: all dollars.
 > **🎯 Signals (client 2026-07-05):** binary options, NOT guaranteed returns — user picks CALL/PUT, entry & settle prices snapshotted, right = stake + return %, wrong/unchanged = full stake lost. Pairs vs NGN incl. BCH; durations in seconds; per-signal trading window.
@@ -96,7 +96,7 @@ User (phone.e164 unique, security question, withdrawalPinHash, TOTP secret, KYC,
 - Email for login alerts still pending (no provider)
 
 ## ⚠️ Pending / verification status
-- ✅ `npm install` done (175 packages) and `npm run smoke` **passes** (15 models register, util invariants hold)
+- ✅ `npm install` done and `npm run smoke` **passes** (17 models register, util invariants hold); `npm test` (Vitest, 38 unit tests) **passes**
 - ⏳ `npm run dev` + `GET /api/health` not yet exercised — needs a `.env` file first (dotenv loads `.env`, not `.env.example`, so the Atlas URI currently isn't picked up and the server would try local Mongo)
 - ⚠️ **Security**: real credentials (Atlas URI, `PG_SECRET_KEY`, JWT secrets) are sitting in `.env.example`, which is a committed file — move them to `.env` (gitignored) and put placeholders back in `.env.example`; rotate the exposed secrets
 

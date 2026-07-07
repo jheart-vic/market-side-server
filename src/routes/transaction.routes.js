@@ -8,7 +8,12 @@ import { LEDGER_TYPES, WALLET_CURRENCIES } from '../config/constants.js';
 const router = Router();
 
 export const historyQuery = z.object({
-  type: z.enum(LEDGER_TYPES).optional(),
+  // single type or comma-separated list, e.g. ?type=withdrawal,withdrawal_hold
+  type: z
+    .string()
+    .transform((s) => s.split(',').map((t) => t.trim()).filter(Boolean))
+    .pipe(z.array(z.enum(LEDGER_TYPES)).min(1))
+    .optional(),
   currency: z.enum(WALLET_CURRENCIES).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),

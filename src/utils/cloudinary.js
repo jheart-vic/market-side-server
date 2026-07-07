@@ -1,6 +1,6 @@
 // Cloudinary v2 helpers for KYC verification documents (SPEC §2.1).
 // Assets are uploaded with type:'private' so they are NOT publicly fetchable —
-// viewing requires a short-lived signed URL (getSignedUrl). Images get an
+// viewing requires a signed URL (getSignedUrl). Images get an
 // incoming transformation that caps dimensions and compresses; PDFs go up as
 // resource_type:'raw'. Buffers are written straight into the upload stream
 // (upload_stream(...).end(buffer)) — no streamifier needed.
@@ -82,15 +82,20 @@ export async function deleteVerificationDoc(publicId, resourceType = 'image') {
   return cloudinary.uploader.destroy(publicId, { type: 'private', resource_type: resourceType });
 }
 
-/** Short-lived signed URL so the owner/admin can view a private document. */
-export function getSignedUrl(publicId, resourceType = 'image', expiresInSeconds = 900) {
+/**
+ * Expiring signed URL so the owner/admin can view a private document inline.
+ * Private ORIGINALS are not deliverable through res.cloudinary.com s--sig--
+ * URLs at all (401 "deny or ACL failure") — they must go through the
+ * api.cloudinary.com download endpoint (private_download_url). Verified
+ * 2026-07-07: it serves both image and raw originals with the correct
+ * content-type and inline disposition, so browsers render them in-page.
+ * No format arg — raw public_ids already carry their extension.
+ */
+export function getSignedUrl(publicId, resourceType = 'image', expiresInSeconds = 3600) {
   if (!publicId || !configured) return null;
-  return cloudinary.url(publicId, {
-    sign_url: true,
-    type: 'private',
+  return cloudinary.utils.private_download_url(publicId, null, {
     resource_type: resourceType,
-    ...(resourceType === 'raw' && { format: 'pdf' }),
+    type: 'private',
     expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
-    secure: true,
   });
 }

@@ -175,7 +175,7 @@ export function convert({ user, from, to, fee, ref, narration, session }) {
 /** Transaction history with type/currency/date filters, display amounts. */
 export async function getHistory(userId, { type, currency, from, to, ...query } = {}) {
   const filter = { user: userId };
-  if (type) filter.type = type;
+  if (type) filter.type = Array.isArray(type) ? { $in: type } : type;
   if (currency) filter.currency = currency;
   if (from || to) {
     filter.createdAt = {

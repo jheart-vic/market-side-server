@@ -16,6 +16,7 @@ import {
 } from '../config/constants.js';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
+import { parsePagination, paginationMeta } from '../utils/pagination.js';
 import {
   percentOf,
   fromSmallestUnits,
@@ -177,6 +178,44 @@ export async function getStats(userId) {
     earningsByLevel,
     totalEarnings: fromSmallestUnits(totalUnits, PLATFORM_CURRENCY),
   };
+}
+
+/** Mask a downline member's phone for display: +2348012345678 → +23480•••5678 */
+function maskPhone(e164) {
+  const s = String(e164 ?? '');
+  if (s.length < 8) return s;
+  return `${s.slice(0, 6)}•••${s.slice(-4)}`;
+}
+
+/**
+ * Paginated downline members at one level. uplines is denormalized
+ * nearest-first, so level-N members are users with uplines[N-1] === userId.
+ */
+export async function getMembers(userId, { level, ...query } = {}) {
+  const id = new mongoose.Types.ObjectId(String(userId));
+  // `uplines: id` hits the multikey index; the positional key pins the level.
+  const filter = { uplines: id, [`uplines.${level - 1}`]: id };
+
+  const { page, limit, skip } = parsePagination(query);
+  const [rows, total] = await Promise.all([
+    User.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select('username fullName phone.e164 status kyc.status createdAt'),
+    User.countDocuments(filter),
+  ]);
+
+  const items = rows.map((u) => ({
+    id: u.id,
+    username: u.username ?? null,
+    fullName: u.fullName ?? null,
+    phone: maskPhone(u.phone?.e164),
+    status: u.status,
+    kycStatus: u.kyc?.status,
+    joinedAt: u.createdAt,
+  }));
+  return { items, meta: paginationMeta(total, page, limit) };
 }
 
 export function getShareLink(user) {

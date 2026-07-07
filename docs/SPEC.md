@@ -2,7 +2,7 @@
 
 _A crypto/NGN trading platform. This document splits the requirements in [project.txt](../project.txt) into **backend** (this repo: Express + MongoDB) and **frontend** (separate repo: React PWA) responsibilities, and records the agreed constraints and recommendations._
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-07
 
 ---
 
@@ -27,11 +27,12 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 
 ### 2.1 Auth & User Accounts
 - **Registration** (`POST /api/auth/register`)
-  - Fields: phone, email, password, optional referral code, **security question + answer** (used later for password reset)
+  - Fields: phone, email, username, full name, password, optional referral code, **security question (picked by id) + answer** (used later for password reset)
+  - **Security questions are predefined server-side (client decision 2026-07-06)** — users do **not** invent their own. A fixed list of 10 questions with stable slug ids lives in `src/config/securityQuestions.js` and is served publicly at `GET /api/auth/security-questions` for the frontend dropdown. Registration takes `securityQuestionId` (validated against the list; unknown ids rejected); the resolved question text + id are both stored on the user. Ids are stable slugs (never runtime-generated) because they persist on user documents
   - Phone parsed/validated with `libphonenumber-js`; stored as `{ countryCode, nationalNumber, e164 }` — the `e164` string (e.g. `+2348012345678`) is the canonical unique key
-  - Password hashed with **bcryptjs**; security-question answer normalized (trim/lowercase) and also hashed with bcryptjs
+  - Password hashed with **bcryptjs**; security-question answer normalized (trim/lowercase/collapse whitespace) and also hashed with bcryptjs
   - Requires a valid captcha (see below)
-  - If a referral code is present, link the new user into the referrer's 3-level tree
+  - If a referral code is present, link the new user into the referrer's 3-level tree and **grant the direct (L1) referrer a Spin & Win credit** (see 2.8a)
 - **Captcha verification** — **svg-captcha** generated server-side behind a `CaptchaService`; each challenge gets an id, the expected answer is stored hashed with a short TTL, is single-use, and attempt-limited. Required on **registration, login, and password-reset** endpoints
 - **Login / logout / session**
   - Short-lived access JWT + rotating refresh token, both delivered as `httpOnly`, `secure`, `sameSite` cookies
@@ -41,8 +42,8 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - **Withdrawal PIN** — separate hashed PIN, required for withdrawals; set/change requires **TOTP if 2FA is enabled, otherwise password re-entry**
 - **Password management**
   - Change password (authenticated, current password required)
-  - **Forgot/reset**: captcha + correct security-question answer → set new password
-  - Security question changeable when authenticated (password re-entry required)
+  - **Forgot/reset**: captcha + correct security-question answer → set new password (`GET /api/auth/security-question?identifier=` returns the user's stored question for display)
+  - Security question changeable when authenticated (password re-entry required; new question also picked by `questionId` from the predefined list)
 - **KYC** — document upload + status lifecycle: `unverified → pending → approved / rejected`
 - **Account states** — `active` / `frozen` (admin-controlled); frozen users can log in but cannot transact
 
@@ -95,7 +96,18 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - Unique referral code + shareable link per user
 - **Referral QR code** — the referral link is also exposed as a QR code (server-generated with the `qrcode` package, returned as a data-URL/PNG endpoint) for the frontend to render, download, and share
 - **3-level commissions** (defaults: L1 = 10%, L2 = 2%, L3 = 1% — admin-configurable), paid **in the platform dollar currency** as ledger entries when qualifying events occur (e.g. deposits or trade fees)
+- A **direct (L1) referral registration also grants the referrer a Spin & Win credit** (count admin-configurable, see 2.8a)
 - Stats endpoints: total referrals, active referrals, earnings per level
+
+### 2.8a Spin & Win (Wheel of Fortune — client requirement 2026-07-06)
+- A circular prize wheel the frontend renders and spins on click. Nine prize segments, **all admin-configurable** (`spin_prizes` in platform settings — display-dollar strings, defaults $10/8/6/5/4/2/1/0.8/0.5)
+- **Outcome is decided server-side, not by chance** — players only ever win the **two lowest** prize values:
+  - every spin pays the **lowest** value…
+  - …except each **Nth spin of the Lagos day, platform-wide** (`spin_bonus_every`, default 5th), which pays the **second lowest**. A global per-day counter (atomic `SpinCounter`, one row per Lagos calendar day) drives this; the modulo rule makes it reset every cycle and every new day automatically
+  - the response carries the winning wheel-segment index so the frontend animates the wheel to the right slot
+- **Spin credits** (one consumed per spin): earned on **direct (L1) referral registration** (`spin_referral_reward`, default 1 credit, 0 disables) or **granted by an admin** (audited). Consumed via an atomic conditional decrement, refunded if the spin fails
+- **Prizes pay via the ledger** — a `spin_reward` credit in the platform dollar currency into the USDT wallet, plus a `Spin` record (day, global sequence, bonus flag, segment index, amount) and an in-app notification. No direct balance writes (ledger-first invariant holds)
+- Endpoints: `GET /api/spin` (wheel config + remaining credits), `POST /api/spin` (play — requires an active account + transaction rate limit), `GET /api/spin/history`; admin `GET /api/admin/spins` and grant credits (see 2.11)
 
 ### 2.9 In-App Notifications
 - `Notification` model: user, type, title, body, read, createdAt
@@ -110,30 +122,33 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 ### 2.11 Admin API (role-based)
 - Roles: `user`, `admin`, `superadmin` (RBAC middleware)
 - Manage users (search, view, edit), freeze/unfreeze accounts
-- Credit/debit wallets — always via audited ledger entries with reason
+- Credit/debit wallets — always via audited ledger entries with reason (response returns balance before/after)
+- **Impersonation ("login as user") — support tool**: `POST /api/admin/users/:id/impersonate` issues a short-lived (2h) access token authenticating **as the target user** but carrying the admin's id in an `imp` claim; **only the access cookie is overwritten**, so the admin's own refresh session survives and `POST /api/admin/impersonation/exit` (or any token refresh) restores it. Staff accounts are superadmin-only targets. While impersonating, `GET /api/auth/me` returns `impersonation.adminId` (frontend banner) and **every admin route is blocked** (`IMPERSONATION_ACTIVE`) so an impersonated session never carries staff powers. Start + exit are audited
 - Approve/reject withdrawals; view deposits
 - **Manage trading signals** (CRUD, release scheduling, view joins/settlements)
+- **Spin & Win**: grant spin credits to a user (audited); view the spin activity feed; configure the wheel prizes / bonus cadence / referral reward via platform settings (see 2.8a)
 - Send announcements
 - **View audit log** — filterable feed (actor, action, date) so admins can see everything happening on the platform
 - **Admin notification feed** (events needing attention — see 2.9)
-- Reports: deposits, withdrawals, trades, signal payouts, referral payouts, user growth
-- Configure referral commission percentages
+- **Reports** (`ReportService`): an **overview** snapshot (`GET /api/admin/reports/overview?from&to` — users total/new/frozen/KYC-pending, deposits & withdrawals by status with volumes and fees, trade count/volume/fees, signals open/settled with wins/losses and **house net**, referral payouts per level) and **daily time series** (`GET /api/admin/reports/timeseries?metric=…` — users, deposits, withdrawals, trades, signal payouts, referral payouts; bucketed on the Africa/Lagos calendar). All money is aggregated in Decimal128 smallest units and returned as display strings
+- Configure referral commission percentages; configure platform settings (deposit/withdrawal mins, withdrawal fee tiers + window + daily limit, FX mode/spreads, spin knobs)
 
 ### 2.12 Security & Cross-Cutting
 - `helmet`, rate limiting (stricter on auth/captcha routes; captcha answer attempts are rate-limited), CORS locked to the frontend origin with `credentials: true`
-- Request validation with **validatejs** on every route
+- Request validation with **zod** on every route (parsed values on `req.validated.{body,query,params}`)
 - **Audit log** for all admin actions and sensitive user actions — exposed to admins via the audit-log endpoint (2.11)
 - Anti-fraud flags: velocity checks, duplicate device/IP registrations, unusual withdrawal patterns → flag for admin review
 - Centralized error handler; structured logging (e.g. `pino`)
+- **Testing** — two layers: **Vitest** unit tests (`npm test`, `tests/*.test.js`) cover pure logic (money math, Lagos time windows, phone parsing, hashing, pagination, security questions, spin outcome rules) with no DB or network; and self-cleaning live e2e scripts against the `.env` MongoDB (`npm run test:auth` service layer, `npm run test:http` over real HTTP incl. cookies/CSRF/admin/impersonation/spins, `npm run test:services`, plus `npm run smoke` for model registration). `npm run test:all` chains unit → smoke → live e2e. Vitest was chosen so the React frontend repo can share one framework
 
 ### 2.13 Suggested Server Structure
 ```
 src/
 ├── config/        # env, db connection, constants
-├── models/        # Mongoose schemas (User, Wallet, LedgerEntry, Trade, Signal, SignalPosition, Withdrawal, Deposit, Referral, Notification, Announcement, AuditLog)
+├── models/        # 17 Mongoose schemas (User, Wallet, LedgerEntry, Trade, Signal, SignalPosition, Withdrawal, Deposit, Referral, Notification, Announcement, AuditLog, Captcha, Session, Setting, Spin, SpinCounter)
 ├── routes/        # route definitions per domain
 ├── controllers/   # request/response handling
-├── services/      # business logic (CaptchaService, PriceService, LedgerService, SignalService, NotificationService, ReferralService, PaymentGateway)
+├── services/      # business logic (CaptchaService, PriceService, LedgerService, SignalService, NotificationService, ReferralService, PaymentGateway, SpinService, ReportService, …)
 ├── middleware/    # auth, RBAC, validation, rate limit, error handler
 ├── utils/         # phone parsing, money math, helpers
 └── jobs/          # price cache refresh, signal release + settlement sweeps, auto-approval sweeps, reconciliation
@@ -148,7 +163,7 @@ src/
 |---|---|
 | **Landing** | Public (logged-out) marketing page explaining what the platform is and everything it offers: live-price ticker teaser, feature highlights (NGN + crypto wallets, trading, daily trading signals, 3-level referral program, secure withdrawals), how-it-works steps, trust/security notes (KYC, 2FA), Register + Login CTAs, links to Privacy/Terms; authenticated users are redirected to Home |
 | **Home** | Live market prices (BTC, ETH, USDT, NGN), wallet balance (₦), total profit/loss, Deposit + Withdraw buttons, referral earnings, latest announcements |
-| **Register** | Phone input with **country-code picker**, email, password, referral code, **security question + answer**, **captcha widget** (svg image + refresh), Terms & Privacy checkbox (**frontend-only gate** — submit disabled until checked) |
+| **Register** | Phone input with **country-code picker**, email, username, full name, password, referral code, **security question (dropdown from `GET /api/auth/security-questions`) + answer**, **captcha widget** (svg image + refresh), Terms & Privacy checkbox (**frontend-only gate** — submit disabled until checked) |
 | **Login** | Phone/email + password + **captcha**; **Google Authenticator (TOTP)** step when 2FA enabled |
 | **Forgot Password** | Captcha → security-question answer → set new password |
 | **Dashboard** | Wallet balance, trading balance, total earnings, active trades, transaction history, referral income, verification status |
@@ -157,12 +172,13 @@ src/
 | **Withdraw** | Bank account form + PIN entry; crypto option hidden or "coming soon" |
 | **Trade** | Candlestick charts (`lightweight-charts`), buy/sell forms, live prices, trading history for BTC/ETH/USDT/BNB vs NGN |
 | **Signals** | Daily signals (released 3:00–5:00 pm WAT), stake to join (once per signal), countdown to settlement, positions/history ("contract order") |
+| **Spin & Win** | Circular prize wheel (9 admin-configured segments) that spins on click; shows remaining spin credits, animates to the winning segment returned by `POST /api/spin`, prize history; credits earned via direct referrals or admin grants |
 | **Markets** | Price list with 24h change, volume, market depth |
 | **Team** | Referral link + **QR code** (view/download/share), total/active referrals, earnings per level |
 | **Notifications** | Bell icon with unread badge in the layout; notification list with mark-read |
 | **Mine / Profile** | Authentication (KYC), invite friends, earn rewards, deposit record, withdrawal record, password & security question, contract order (signal positions), about us, sign out |
 | **Privacy / Terms** | Static legal pages, linked from the register checkbox |
-| **Admin UI** | User management, withdrawals queue, deposits, signals management, announcements, audit log, notifications, reports (can be a separate route group or app) |
+| **Admin UI** | User management (+ **impersonation** "login as user" with a persistent "viewing as" banner and exit button), withdrawals queue, deposits, signals management, spin credit grants + spin feed, announcements, audit log, notifications, reports (overview cards + daily charts) — can be a separate route group or app |
 
 ### 3.2 Navigation & Layout
 - **Bottom navigation** (mobile): Home · Markets · Trade · Wallet · Team · Profile
@@ -211,3 +227,5 @@ src/
 | — | Trading Signals (new requirement, not in project.txt) | Backend 2.7 + Frontend 3.1 (Signals) |
 | — | In-app Notifications (new requirement) | Backend 2.9 + Frontend 3.1 (Notifications) |
 | — | Landing page (new requirement) | Frontend 3.1 (Landing) |
+| — | Spin & Win wheel (new requirement 2026-07-06) | Backend 2.8a + Frontend 3.1 (Spin & Win) |
+| — | Admin impersonation (new requirement 2026-07-06) | Backend 2.11 + Frontend 3.1 (Admin UI) |

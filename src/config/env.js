@@ -7,6 +7,10 @@ const schema = z
     PORT: z.coerce.number().int().positive().default(5000),
     MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/market-side'),
     CLIENT_ORIGIN: z.string().url().default('http://localhost:5173'),
+    // Origin of the admin console SPA, when it's served separately from the user
+    // app (browser blocks the response otherwise). Leave unset if admin + user
+    // share one origin in production — CLIENT_ORIGIN then covers both.
+    ADMIN_ORIGIN: z.string().url().optional(),
     // Parent domain for auth cookies in production (e.g. ".example.com" when the
     // frontend and API are on subdomains). Unset → host-only cookies.
     COOKIE_DOMAIN: z.string().optional(),
@@ -58,3 +62,9 @@ const schema = z
 
 export const env = schema.parse(process.env);
 export const isProd = env.NODE_ENV === 'production';
+
+// Origins allowed by CORS / Socket.IO. In production a single CLIENT_ORIGIN
+// covers both apps when they share an origin; set ADMIN_ORIGIN only if the admin
+// console lives on a different host. In dev the admin SPA defaults to :5174.
+const adminOrigin = env.ADMIN_ORIGIN || (isProd ? env.CLIENT_ORIGIN : 'http://localhost:5174');
+export const corsOrigins = [...new Set([env.CLIENT_ORIGIN, adminOrigin])];

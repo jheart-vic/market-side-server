@@ -3,7 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
-import { env, isProd } from './config/env.js';
+import { env, isProd, corsOrigins } from './config/env.js';
 import { logger } from './config/logger.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import { generalLimiter } from './middleware/rateLimit.js';
@@ -16,7 +16,7 @@ export const app = express();
 if (isProd) app.set('trust proxy', 1);
 
 app.use(helmet());
-app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
+app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(
   express.json({
     limit: '1mb',

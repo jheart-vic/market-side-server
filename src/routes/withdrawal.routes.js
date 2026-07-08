@@ -18,14 +18,25 @@ router.post(
   requireActive,
   transactionLimiter,
   validate({
-    body: z.object({
-      amountUsd: z.string().regex(/^\d+(\.\d+)?$/, 'display dollars, e.g. "25"'),
-      pin: z.string().regex(/^\d{4,6}$/),
-      totp: z.string().regex(/^\d{6}$/).optional(), // required when 2FA is enabled
-      bankCode: z.enum(NG_BANK_CODES),
-      accountNumber: z.string().regex(/^\d{10,11}$/, 'NUBAN account number'),
-      accountName: z.string().trim().min(3).max(100),
-    }),
+    // Pay to a saved account by id (or the user's default when omitted), OR
+    // pass the bank details inline. The service resolves whichever is given.
+    body: z
+      .object({
+        amountUsd: z.string().regex(/^\d+(\.\d+)?$/, 'display dollars, e.g. "25"'),
+        pin: z.string().regex(/^\d{4,6}$/),
+        totp: z.string().regex(/^\d{6}$/).optional(), // required when 2FA is enabled
+        bankAccountId: z.string().regex(/^[0-9a-fA-F]{24}$/).optional(),
+        bankCode: z.enum(NG_BANK_CODES).optional(),
+        accountNumber: z.string().regex(/^\d{10,11}$/, 'NUBAN account number').optional(),
+        accountName: z.string().trim().min(3).max(100).optional(),
+      })
+      // Inline bank details are all-or-nothing (a saved account needs none of them)
+      .refine(
+        (b) =>
+          (b.bankCode && b.accountNumber && b.accountName) ||
+          (!b.bankCode && !b.accountNumber && !b.accountName),
+        { message: 'Provide bankCode, accountNumber and accountName together, or use a saved account' },
+      ),
   }),
   ctrl.create,
 );

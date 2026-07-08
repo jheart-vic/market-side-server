@@ -15,3 +15,4 @@ export { Session } from './Session.js';
 export { Setting } from './Setting.js';
 export { Spin } from './Spin.js';
 export { SpinCounter } from './SpinCounter.js';
+export { BankAccount } from './BankAccount.js';

@@ -5,6 +5,7 @@
 import { generateSecret as generateTotpSecret, verify as verifyTotp, generateURI as totpUri } from 'otplib';
 import QRCode from 'qrcode';
 import { User } from '../models/User.js';
+import { logger } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { parsePhone } from '../utils/phone.js';
 import { hashValue, compareValue, normalizeSecurityAnswer } from '../utils/hash.js';
@@ -19,6 +20,19 @@ import * as auditService from './audit.service.js';
 import * as spinService from './spin.service.js';
 
 const AUTH_FAILED = () => ApiError.unauthorized('Invalid credentials', 'INVALID_CREDENTIALS');
+
+// Timing decoy for the "no such account" path. bcrypt is deliberately slow, so
+// skipping the compare when a user isn't found returns measurably faster than a
+// wrong-password response — an attacker can use that gap to enumerate valid
+// identifiers. We run one real bcrypt compare against a throwaway hash instead,
+// so both paths spend the same CPU. The hash is computed once via hashValue, so
+// it always matches the configured BCRYPT_ROUNDS (a hardcoded constant would
+// drift if the cost factor were raised). The plaintext is arbitrary and unused.
+let decoyHashPromise;
+function equalizeAuthTiming(input) {
+  if (!decoyHashPromise) decoyHashPromise = hashValue('timing-decoy-not-a-real-credential');
+  return decoyHashPromise.then((hash) => compareValue(input, hash));
+}
 
 /**
  * otplib v13: verify() resolves { valid } and by default rejects any code not
@@ -152,7 +166,10 @@ export async function login({ identifier, password, captchaId, captchaAnswer, to
   await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'login');
 
   const user = await findByIdentifier(identifier, '+passwordHash +twoFactor.secret +knownDevices');
-  if (!user) throw AUTH_FAILED();
+  if (!user) {
+    await equalizeAuthTiming(password); // decoy compare — no user-enumeration timing oracle
+    throw AUTH_FAILED();
+  }
   if (!(await compareValue(password, user.passwordHash))) throw AUTH_FAILED();
 
   if (user.twoFactor.enabled) {
@@ -170,12 +187,17 @@ export async function login({ identifier, password, captchaId, captchaAnswer, to
   if (!known) {
     user.knownDevices.push({ ip: meta.ip, userAgent: meta.userAgent });
     if (user.knownDevices.length > 20) user.knownDevices.shift(); // cap the list
-    await notificationService.notifyUser(user._id, {
-      type: 'login_alert',
-      title: 'New login to your account',
-      body: `A login from a new device or location was detected${meta.ip ? ` (IP ${meta.ip})` : ''}. If this wasn't you, change your password immediately.`,
-      meta: { ip: meta.ip, userAgent: meta.userAgent },
-    });
+    // Best-effort: a failing notification provider must not 500 a valid login
+    try {
+      await notificationService.notifyUser(user._id, {
+        type: 'login_alert',
+        title: 'New login to your account',
+        body: `A login from a new device or location was detected${meta.ip ? ` (IP ${meta.ip})` : ''}. If this wasn't you, change your password immediately.`,
+        meta: { ip: meta.ip, userAgent: meta.userAgent },
+      });
+    } catch (err) {
+      logger.warn({ err, userId: String(user._id) }, 'login_alert notification failed');
+    }
     // TODO(email): send the same alert by email once an email provider is wired up
   } else {
     const device = user.knownDevices.find((d) => d.ip === meta.ip && d.userAgent === meta.userAgent);
@@ -216,7 +238,10 @@ export async function resetPassword({ identifier, answer, newPassword, captchaId
   await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'password_reset');
 
   const user = await findByIdentifier(identifier, '+security.answerHash');
-  if (!user) throw ApiError.badRequest('Password reset failed', 'RESET_FAILED');
+  if (!user) {
+    await equalizeAuthTiming(normalizeSecurityAnswer(answer)); // decoy compare — same timing as a real answer check
+    throw ApiError.badRequest('Password reset failed', 'RESET_FAILED');
+  }
   if (!(await compareValue(normalizeSecurityAnswer(answer), user.security.answerHash))) {
     throw ApiError.badRequest('Password reset failed', 'RESET_FAILED'); // same error — no oracle
   }

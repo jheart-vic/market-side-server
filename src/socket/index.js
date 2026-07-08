@@ -14,7 +14,7 @@
 
 import { Server } from 'socket.io';
 import { jwtVerify } from 'jose';
-import { env } from '../config/env.js';
+import { env, corsOrigins } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { COOKIES } from '../config/constants.js';
 import * as notificationService from '../services/notification.service.js';
@@ -34,7 +34,7 @@ function readAccessToken(handshake) {
 
 export function initSocket(server) {
   const io = new Server(server, {
-    cors: { origin: env.CLIENT_ORIGIN, credentials: true },
+    cors: { origin: corsOrigins, credentials: true },
   });
 
   io.use(async (socket, next) => {

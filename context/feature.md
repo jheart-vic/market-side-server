@@ -11,7 +11,7 @@ _Every backend feature we're building, tracked here. Derived from [docs/SPEC.md]
 - [x] MongoDB connection (Mongoose 8), env config (zod-validated, incl. PG_* gateway vars), constants
 - [x] Global middleware: helmet, CORS, cookie-parser, pino-http, centralized error handler, general rate limiter, global CSRF (double-submit), `trust proxy` in prod
 - [x] **Middleware layer** (`src/middleware/`): `requireAuth`/`optionalAuth`/`requireActive` (JWT cookie via jose), `requireRole` RBAC, `validate` (zod → `req.validated`), rate limiters (general/auth/captcha/transaction), `csrfProtection` + `issueCsrfCookie`, `ipAllowlist` (gateway webhooks), error handler
-- [x] **All 17 models** (`src/models/`): User, Wallet, LedgerEntry (immutable), Deposit, Withdrawal, Trade, Signal, SignalPosition, Referral, Notification, Announcement, AuditLog (immutable), Captcha (TTL), Session (refresh tokens), Setting (key/value for runtime config), Spin, SpinCounter — _investment plans dropped from scope 2026-07-05_
+- [x] **All 18 models** (`src/models/`): User, Wallet, LedgerEntry (immutable), Deposit, Withdrawal, Trade, Signal, SignalPosition, Referral, Notification, Announcement, AuditLog (immutable), Captcha (TTL), Session (refresh tokens), Setting (key/value for runtime config), Spin, SpinCounter, BankAccount — _investment plans dropped from scope 2026-07-05_
 - [x] **Utils** (`src/utils/`): money (BigInt smallest-units ↔ Decimal128), phone (E.164), hash (bcryptjs), referralCode, time (Africa/Lagos window), tokens, ApiError, asyncHandler, pagination
 - [x] Smoke test (`npm run smoke`) — model registration + util invariants without a DB
 - [x] **Vitest unit tests** (`npm test`, `tests/*.test.js`) — fast DB-free coverage of money/time/phone/hash/pagination/security-questions/spin-rules; `npm run test:all` = unit → smoke → live e2e
@@ -46,6 +46,7 @@ _Service layer + HTTP routes done & e2e-tested (`npm run test:auth` = service le
 - [x] `POST /api/withdrawals {amountUsd, pin, totp?, bankCode, accountNumber, accountName}` — PIN + TOTP-if-2FA, **admin-configurable Lagos window/days + daily limit + tiered fee** (below/above threshold), USD→NGN at locked rate, whole-naira payout, **gross $ held via ledger**, payout submitted to gateway (failure = instant refund)
 - [x] Lifecycle `pending → approved (gateway processing) → paid / rejected`; payout callback settles the hold or refunds it (idempotent)
 - [x] `GET /api/withdrawals` + `GET /api/withdrawals/banks` (curated gateway bank codes) · admin list/approve/reject; `GET /api/admin/payments/balance` (shared merchant float)
+- [x] **Saved bank accounts** (`BankAccount` model + `/api/bank`): `GET /list` (supported `{code,name}` from config/ngBanks), `GET /accounts`, `POST /bind` (validates gateway `bankCode`, newest becomes default, unique per user+bank+number → 409), `POST /accounts/:id/default`, `DELETE /accounts/:id` (promotes newest remaining). Withdrawal request resolves a saved account by `bankAccountId` or the user's default (or inline bank details, all-or-nothing)
 - [ ] Auto-approve rules sweep (currently every gateway-accepted payout is auto-submitted; a review-queue mode can be added)
 
 ## 5. Market Data Service (SPEC §2.5)

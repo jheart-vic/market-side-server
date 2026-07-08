@@ -79,6 +79,13 @@ try {
   );
   console.log('✓ wrong password rejected');
 
+  // --- unknown identifier: same error as wrong password (timing-decoy path, no enumeration) ---
+  await assert.rejects(
+    auth.login({ identifier: 'nobody@nowhere.test', password: 'nope', ...(await seedCaptcha('login')), meta }),
+    /Invalid credentials/,
+  );
+  console.log('✓ unknown user rejected identically (decoy compare, no ReferenceError)');
+
   // --- login by username ---
   const byUsername = await auth.login({
     identifier: `E2E_${stamp}`, // case-insensitive

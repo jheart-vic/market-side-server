@@ -63,7 +63,9 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 
 ### 2.4 Withdrawals
 - Withdraw to **Nigerian bank account** only for now (crypto withdrawal deferred — hidden or "coming soon" on the frontend)
-- Requires withdrawal PIN (+ 2FA if enabled); bank account name resolution via gateway API
+- **Saved bank accounts** (`BankAccount` model, `/api/bank`): a user can save multiple withdrawal accounts and mark one as the **default**; the newest bound account becomes the default, and deleting the default promotes the most recent remaining one. Banks are restricted to `config/ngBanks.js` — each saved account stores the exact gateway **`bankCode`** (so it is directly payable) plus the display name. Endpoints: `GET /api/bank/list` (supported `{code, name}` banks), `GET /api/bank/accounts`, `POST /api/bank/bind`, `POST /api/bank/accounts/:id/default`, `DELETE /api/bank/accounts/:id`. `isVerified` is reserved for future gateway account-name resolution
+- A withdrawal request pays to a **saved account** (by `bankAccountId`, or the user's default when omitted) **or** inline bank details (all-or-nothing)
+- Requires withdrawal PIN (+ 2FA if enabled); bank account name resolution via gateway API (planned)
 - Status lifecycle: `pending → approved → paid` / `rejected` (funds held/escrowed while pending, refunded on reject)
 - Admin actions: **manual approve**, **auto-approve rules** (e.g. below a threshold, KYC-approved users), **reject with reason**
 
@@ -145,7 +147,7 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 ```
 src/
 ├── config/        # env, db connection, constants
-├── models/        # 17 Mongoose schemas (User, Wallet, LedgerEntry, Trade, Signal, SignalPosition, Withdrawal, Deposit, Referral, Notification, Announcement, AuditLog, Captcha, Session, Setting, Spin, SpinCounter)
+├── models/        # 18 Mongoose schemas (User, Wallet, LedgerEntry, Trade, Signal, SignalPosition, Withdrawal, Deposit, Referral, Notification, Announcement, AuditLog, Captcha, Session, Setting, Spin, SpinCounter, BankAccount)
 ├── routes/        # route definitions per domain
 ├── controllers/   # request/response handling
 ├── services/      # business logic (CaptchaService, PriceService, LedgerService, SignalService, NotificationService, ReferralService, PaymentGateway, SpinService, ReportService, …)
@@ -169,7 +171,7 @@ src/
 | **Dashboard** | Wallet balance, trading balance, total earnings, active trades, transaction history, referral income, verification status |
 | **Wallet** | NGN / USDT / BTC / ETH balances, convert between NGN and crypto, transaction list |
 | **Deposit** | Gateway checkout flow, deposit history |
-| **Withdraw** | Bank account form + PIN entry; crypto option hidden or "coming soon" |
+| **Withdraw** | Saved bank accounts (add/pick/set-default/delete via `/api/bank`, bank chosen from `GET /api/bank/list`) + amount + PIN entry; crypto option hidden or "coming soon" |
 | **Trade** | Candlestick charts (`lightweight-charts`), buy/sell forms, live prices, trading history for BTC/ETH/USDT/BNB vs NGN |
 | **Signals** | Daily signals (released 3:00–5:00 pm WAT), stake to join (once per signal), countdown to settlement, positions/history ("contract order") |
 | **Spin & Win** | Circular prize wheel (9 admin-configured segments) that spins on click; shows remaining spin credits, animates to the winning segment returned by `POST /api/spin`, prize history; credits earned via direct referrals or admin grants |

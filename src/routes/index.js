@@ -12,6 +12,7 @@ import signalRoutes from './signal.routes.js';
 import spinRoutes from './spin.routes.js';
 import depositRoutes from './deposit.routes.js';
 import withdrawalRoutes from './withdrawal.routes.js';
+import bankRoutes from './bank.routes.js';
 import paymentRoutes from './payment.routes.js';
 import settingsRoutes from './settings.routes.js';
 import adminRoutes from './admin.routes.js';
@@ -31,6 +32,7 @@ router.use('/signals', signalRoutes);
 router.use('/spin', spinRoutes);
 router.use('/deposits', depositRoutes);
 router.use('/withdrawals', withdrawalRoutes);
+router.use('/bank', bankRoutes);
 router.use('/payments', paymentRoutes); // gateway webhooks (IP + signature gated)
 router.use('/settings', settingsRoutes); // display-safe platform settings
 router.use('/admin', adminRoutes);

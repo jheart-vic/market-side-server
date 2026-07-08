@@ -14,6 +14,7 @@ import { Notification } from '../src/models/Notification.js';
 import { LedgerEntry } from '../src/models/LedgerEntry.js';
 import { AuditLog } from '../src/models/AuditLog.js';
 import { Spin } from '../src/models/Spin.js';
+import { BankAccount } from '../src/models/BankAccount.js';
 import { sha256 } from '../src/utils/tokens.js';
 import { toSmallestUnits, fromSmallestUnits } from '../src/utils/money.js';
 
@@ -256,6 +257,65 @@ try {
   assert.ok(adminSpins.body.items.some((s) => s.id === spun.body.spinId), 'admin feed shows the spin');
   console.log('✓ spin & win: grant 2 → wheel → spin pays lowest-tier prize via ledger → history + admin feed');
 
+  // Bank accounts: list banks, bind two (newest = default), switch default, delete
+  const bankList = await api('/api/bank/list');
+  assert.equal(bankList.status, 200);
+  assert.ok(bankList.body.banks.length > 10 && bankList.body.banks[0].code && bankList.body.banks[0].name);
+
+  const code1 = 'GUARANTY TRUST BANK PLC'; // from config/ngBanks.js
+  const code2 = 'UNITED BANK FOR AFRICA PLC';
+  const bind1 = await api('/api/bank/bind', {
+    method: 'POST',
+    csrf: true,
+    body: { bankCode: code1, accountName: 'HTTP E2E User', accountNumber: '0123456789' },
+  });
+  assert.equal(bind1.status, 201, JSON.stringify(bind1.body));
+  assert.equal(bind1.body.account.isDefault, true);
+  assert.equal(bind1.body.account.bankName, 'GTBank'); // display name derived from ngBanks
+
+  const bind2 = await api('/api/bank/bind', {
+    method: 'POST',
+    csrf: true,
+    body: { bankCode: code2, accountName: 'HTTP E2E User', accountNumber: '2109876543' },
+  });
+  assert.equal(bind2.status, 201);
+  assert.equal(bind2.body.account.isDefault, true); // newest becomes default
+
+  // unsupported bank rejected at validation
+  const badBank = await api('/api/bank/bind', {
+    method: 'POST',
+    csrf: true,
+    body: { bankCode: 'NOT A REAL BANK', accountName: 'x y', accountNumber: '0123456789' },
+  });
+  assert.equal(badBank.status, 400);
+
+  // duplicate (same user+bank+number) → 409
+  const dup = await api('/api/bank/bind', {
+    method: 'POST',
+    csrf: true,
+    body: { bankCode: code2, accountName: 'HTTP E2E User', accountNumber: '2109876543' },
+  });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.code, 'BANK_ACCOUNT_EXISTS');
+
+  const accounts = await api('/api/bank/accounts');
+  assert.equal(accounts.body.accounts.length, 2);
+  assert.equal(accounts.body.accounts[0].isDefault, true); // default sorts first
+  const firstId = bind1.body.account.id;
+
+  // switch the default back to the first account
+  const setDef = await api(`/api/bank/accounts/${firstId}/default`, { method: 'POST', csrf: true });
+  assert.equal(setDef.status, 200);
+  assert.equal(setDef.body.account.isDefault, true);
+
+  // delete the current default → the other is promoted
+  const del = await api(`/api/bank/accounts/${firstId}`, { method: 'DELETE', csrf: true });
+  assert.equal(del.status, 200);
+  const afterDel = await api('/api/bank/accounts');
+  assert.equal(afterDel.body.accounts.length, 1);
+  assert.equal(afterDel.body.accounts[0].isDefault, true); // promoted
+  console.log('✓ bank accounts: list → bind ×2 (newest default) → dup 409 → switch default → delete promotes');
+
   // impersonation: browse AS the target, admin routes blocked, exit restores
   target = await User.create({
     phone: { countryCode: '+234', nationalNumber: '70' + stamp.slice(1), e164: `+23470${stamp.slice(1)}` },
@@ -305,6 +365,7 @@ try {
       Session.deleteMany({ user: userId }),
       Notification.deleteMany({ user: userId }),
       Spin.deleteMany({ user: userId }),
+      BankAccount.deleteMany({ user: userId }),
       // append-only collections: raw driver deleteMany bypasses the immutability hooks
       LedgerEntry.collection.deleteMany({ user: uid }),
       AuditLog.collection.deleteMany({ actor: uid }),

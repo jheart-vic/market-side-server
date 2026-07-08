@@ -27,6 +27,7 @@ import * as ledgerService from './ledger.service.js';
 import * as authService from './auth.service.js';
 import * as notificationService from './notification.service.js';
 import * as auditService from './audit.service.js';
+import * as bankAccountService from './bankAccount.service.js';
 import { usdNgnRateKobo, usdMicroToNgnKobo } from './fx.service.js';
 
 // ---------------------------------------------------------------------------
@@ -131,10 +132,18 @@ export function listBanks() {
 // Request
 // ---------------------------------------------------------------------------
 
-export async function requestWithdrawal(user, { amountUsd, pin, totp, bankCode, accountNumber, accountName }, meta = {}) {
+export async function requestWithdrawal(user, params, meta = {}) {
+  const { amountUsd, pin, totp, bankAccountId } = params;
   if (!paymentService.isConfigured()) {
     throw new ApiError(503, 'Payments are not configured on this server', 'GATEWAY_UNCONFIGURED');
   }
+
+  // Resolve the destination: inline bank details if fully provided, otherwise a
+  // saved account (explicit id, or the user's default when neither is given).
+  const inlineBank = params.bankCode && params.accountNumber && params.accountName;
+  const { bankCode, accountNumber, accountName } = inlineBank
+    ? { bankCode: params.bankCode, accountNumber: params.accountNumber, accountName: params.accountName }
+    : await bankAccountService.resolveForWithdrawal(user._id, bankAccountId);
 
   const settings = await settingsService.getSettings();
   if (!isWithinWithdrawalWindow(settings.withdrawal_days, settings.withdrawal_hours)) {

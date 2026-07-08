@@ -72,12 +72,36 @@ try {
   assert.equal(health.status, 200);
   console.log('✓ GET /api/health');
 
-  // predefined security questions (public list the register dropdown renders)
-  const questions = await api('/api/auth/security-questions');
-  assert.equal(questions.status, 200);
-  assert.equal(questions.body.questions.length, 10);
-  assert.ok(questions.body.questions.every((q) => q.id && q.question), 'each has id + text');
-  console.log('✓ GET /api/auth/security-questions (10 predefined, id + text)');
+  // admin login (env-configured superadmin, no captcha). Run before the user
+  // session exists so nothing clobbers cookies; use a raw fetch when configured
+  // so the admin session isn't stored in the shared jar.
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && process.env.ADMIN_PHONE) {
+    const r = await fetch(`${base}/api/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD }),
+    });
+    const body = JSON.parse(await r.text());
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.ok(['admin', 'superadmin'].includes(body.user.role), 'admin role');
+    assert.ok(r.headers.getSetCookie().some((c) => c.startsWith('ms_access=')), 'admin login sets access cookie');
+    // wrong password → 401 (same error as wrong email)
+    const bad = await fetch(`${base}/api/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: 'definitely-wrong' }),
+    });
+    assert.equal(bad.status, 401);
+    console.log('✓ POST /api/auth/admin/login (env superadmin) → 200 + cookie, wrong password → 401');
+  } else {
+    const unconfigured = await api('/api/auth/admin/login', {
+      method: 'POST',
+      body: { email: 'admin@example.test', password: 'whatever-123' },
+    });
+    assert.equal(unconfigured.status, 503);
+    assert.equal(unconfigured.body.code, 'ADMIN_NOT_CONFIGURED');
+    console.log('✓ POST /api/auth/admin/login unconfigured → 503 ADMIN_NOT_CONFIGURED');
+  }
 
   // captcha challenge issue (real one — just checking the shape)
   const cap = await api('/api/auth/captcha?purpose=register');
@@ -100,23 +124,13 @@ try {
       username: `http_${stamp}`,
       fullName: 'HTTP E2E User',
       password: 'Passw0rd!x',
-      securityQuestionId: 'first-pet-name',
-      securityAnswer: 'blue',
       ...(await seedCaptcha('register')),
     },
   });
   assert.equal(reg.status, 201, JSON.stringify(reg.body));
   userId = reg.body.user.id;
-
-  // free-text / unknown security question is rejected (csrf: cookies exist now)
-  const badQuestion = await api('/api/auth/register', {
-    method: 'POST',
-    csrf: true,
-    body: { securityQuestionId: 'my-own-question' },
-  });
-  assert.equal(badQuestion.status, 400);
-  assert.equal(badQuestion.body.code, 'VALIDATION_ERROR');
-  console.log('✓ register: unknown securityQuestionId → 400');
+  assert.ok(Array.isArray(reg.body.recoveryCodes) && reg.body.recoveryCodes.length === 10, 'register returns 10 recovery codes');
+  console.log('✓ register returns one-time recovery codes');
 
   assert.ok(jar.has('ms_access') && jar.has('ms_refresh') && jar.has('ms_csrf'), 'auth cookies set');
   console.log('✓ POST /api/auth/register → 201 + ms_access/ms_refresh/ms_csrf cookies');
@@ -147,6 +161,35 @@ try {
   const badCur = await api('/api/wallets/DOGE');
   assert.equal(badCur.status, 400);
   console.log('✓ GET /api/wallets + /api/wallets/NGN (DOGE → 400)');
+
+  // --- sessions & devices ---
+  // a second login opens a second session (jar now holds the newest = current)
+  await api('/api/auth/login', {
+    method: 'POST',
+    csrf: true,
+    body: { identifier: testEmail, password: 'Passw0rd!x', ...(await seedCaptcha('login')) },
+  });
+  let sess = (await api('/api/sessions')).body.sessions;
+  assert.ok(sess.length >= 2, 'two active sessions');
+  assert.equal(sess.filter((s) => s.current).length, 1, 'exactly one current session');
+  assert.ok('browser' in sess[0].device && 'os' in sess[0].device, 'session carries a parsed device label');
+  // delete a non-current session by id ("log out that device")
+  const other = sess.find((s) => !s.current);
+  const delSession = await api(`/api/sessions/${other.id}`, { method: 'DELETE', csrf: true });
+  assert.equal(delSession.status, 200);
+  assert.equal(delSession.body.wasCurrent, false);
+  // open another, then revoke-others keeps only the current session alive
+  await api('/api/auth/login', {
+    method: 'POST',
+    csrf: true,
+    body: { identifier: testEmail, password: 'Passw0rd!x', ...(await seedCaptcha('login')) },
+  });
+  const revoked = await api('/api/sessions/revoke-others', { method: 'POST', csrf: true });
+  assert.ok(revoked.body.revokedCount >= 1, 'other sessions revoked');
+  sess = (await api('/api/sessions')).body.sessions;
+  assert.equal(sess.length, 1, 'only the current session remains');
+  assert.ok(sess[0].current);
+  console.log('✓ sessions: list (device + current), delete by id, revoke-others keeps current');
 
   // profile + user-facing feature routes
   const profile = await api('/api/users/me');

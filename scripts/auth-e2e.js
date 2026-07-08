@@ -39,8 +39,6 @@ try {
     username: `e2e_${stamp}`,
     fullName: 'E2E Test User',
     password: 'Passw0rd!x',
-    securityQuestionId: 'first-pet-name',
-    securityAnswer: '  Bingo THE dog ',
     ...(await seedCaptcha('register')),
     meta,
   });
@@ -48,9 +46,10 @@ try {
   assert.ok(reg.accessToken && reg.refreshToken, 'register returns tokens');
   assert.equal(reg.user.email, testEmail);
   assert.match(reg.user.referralCode, /^[2-9A-Z]{8}$/);
+  assert.ok(Array.isArray(reg.recoveryCodes) && reg.recoveryCodes.length === 10, 'register returns 10 recovery codes');
   const wallets = await Wallet.find({ user: userId });
   assert.equal(wallets.length, 5, '5 wallets created');
-  console.log('✓ register (user + 5 wallets + session)');
+  console.log('✓ register (user + 5 wallets + session + recovery codes)');
 
   // --- wrong captcha answer rejected ---
   const badCap = await seedCaptcha('login');
@@ -103,22 +102,41 @@ try {
   await assert.rejects(auth.refresh(r1.refreshToken, meta), /Invalid refresh/); // session was revoked by replay
   console.log('✓ refresh rotation + replay revokes session');
 
-  // --- security question + password reset ---
-  const q = await auth.getSecurityQuestion(testEmail);
-  assert.equal(q.question, 'What was the name of your first pet?');
+  // --- recovery-code password reset ---
+  const code = reg.recoveryCodes[0];
+  // wrong code fails uniformly
   await assert.rejects(
-    auth.resetPassword({ identifier: testEmail, answer: 'wrong answer', newPassword: 'NewPass1!', ...(await seedCaptcha('password_reset')) }),
+    auth.resetPassword({ identifier: testEmail, recoveryCode: 'WRONG-CODE1', newPassword: 'NewPass1!', ...(await seedCaptcha('password_reset')) }),
     /Password reset failed/,
   );
-  await auth.resetPassword({
+  // a real code works (format-insensitive: lowercase + spaces)
+  const reset = await auth.resetPassword({
     identifier: testEmail,
-    answer: 'bingo the  DOG', // normalization: case/spacing insensitive
+    recoveryCode: code.toLowerCase().replace('-', ' '),
     newPassword: 'NewPass1!',
     ...(await seedCaptcha('password_reset')),
   });
+  assert.equal(reset.recoveryCodesRemaining, 9, 'one code burned');
+  // the same code cannot be reused
+  await assert.rejects(
+    auth.resetPassword({ identifier: testEmail, recoveryCode: code, newPassword: 'Another1!', ...(await seedCaptcha('password_reset')) }),
+    /Password reset failed/,
+  );
   const login2 = await auth.login({ identifier: testEmail, password: 'NewPass1!', ...(await seedCaptcha('login')), meta });
   assert.ok(login2.accessToken, 'login works with reset password');
-  console.log('✓ security-question reset (normalized answer)');
+  console.log('✓ recovery-code reset (format-insensitive, one-time, no reuse)');
+
+  // --- regenerate recovery codes (password re-entry) ---
+  const freshDoc = await User.findById(userId);
+  await assert.rejects(auth.regenerateRecoveryCodes(freshDoc, { password: 'wrong' }), /Password is incorrect/);
+  const regen = await auth.regenerateRecoveryCodes(freshDoc, { password: 'NewPass1!' });
+  assert.equal(regen.recoveryCodes.length, 10, 'regenerated a fresh set');
+  // old codes no longer work after regeneration
+  await assert.rejects(
+    auth.resetPassword({ identifier: testEmail, recoveryCode: reg.recoveryCodes[1], newPassword: 'X', ...(await seedCaptcha('password_reset')) }),
+    /Password reset failed/,
+  );
+  console.log('✓ regenerate recovery codes (invalidates old set)');
 
   // --- withdrawal PIN (no 2FA yet → password path) ---
   const userDoc = await User.findById(userId);

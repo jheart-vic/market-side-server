@@ -66,8 +66,6 @@ async function makeUser(tag, extra = {}) {
     username: `svc_${tag}_${stamp}`,
     fullName: `Service E2E ${tag}`,
     password: 'Passw0rd!x',
-    securityQuestion: 'First pet name?',
-    securityAnswer: 'bingo',
     ...(await seedCaptcha('register')),
     ...extra,
     meta,

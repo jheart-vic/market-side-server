@@ -27,8 +27,8 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 
 ### 2.1 Auth & User Accounts
 - **Registration** (`POST /api/auth/register`)
-  - Fields: phone, email, username, full name, password, optional referral code, **security question (picked by id) + answer** (used later for password reset)
-  - **Security questions are predefined server-side (client decision 2026-07-06)** — users do **not** invent their own. A fixed list of 10 questions with stable slug ids lives in `src/config/securityQuestions.js` and is served publicly at `GET /api/auth/security-questions` for the frontend dropdown. Registration takes `securityQuestionId` (validated against the list; unknown ids rejected); the resolved question text + id are both stored on the user. Ids are stable slugs (never runtime-generated) because they persist on user documents
+  - Fields: phone, email, username, full name, password, optional referral code (captcha required). **No security question.**
+  - **Recovery codes (client decision 2026-07-08 — replaces security questions):** registration generates **10 one-time recovery codes**, returned in the response **exactly once** for the user to save; only fast hashes (sha256 — the codes are high-entropy) are stored on the user. They are the account-ownership proof for password reset. `POST /api/auth/recovery-codes/regenerate` (authenticated, password re-entry) issues a fresh set and invalidates the old one; profile reports `recoveryCodesRemaining`
   - Phone parsed/validated with `libphonenumber-js`; stored as `{ countryCode, nationalNumber, e164 }` — the `e164` string (e.g. `+2348012345678`) is the canonical unique key
   - Password hashed with **bcryptjs**; security-question answer normalized (trim/lowercase/collapse whitespace) and also hashed with bcryptjs
   - Requires a valid captcha (see below)
@@ -38,12 +38,13 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
   - Short-lived access JWT + rotating refresh token, both delivered as `httpOnly`, `secure`, `sameSite` cookies
   - CSRF protection (double-submit token or `sameSite=strict` + custom header check)
   - Login alerts (**in-app notification + email**) on new device or IP
+- **Admin login** (`POST /api/auth/admin/login`) — a separate **email + password** login for staff, **no captcha** (rate-limited instead). Credentials come from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env (the source of truth, constant-time compared on every login); `ADMIN_PHONE` satisfies the User model. There is **no admin registration** — the backing `superadmin` User is **created on first successful login** (with wallets), then normal cookie/session issuance applies. Returns 503 when the env creds aren't configured
 - **2FA** — TOTP via **Google Authenticator** (or any compatible authenticator app): enable/verify/disable
 - **Withdrawal PIN** — separate hashed PIN, required for withdrawals; set/change requires **TOTP if 2FA is enabled, otherwise password re-entry**
 - **Password management**
   - Change password (authenticated, current password required)
-  - **Forgot/reset**: captcha + correct security-question answer → set new password (`GET /api/auth/security-question?identifier=` returns the user's stored question for display)
-  - Security question changeable when authenticated (password re-entry required; new question also picked by `questionId` from the predefined list)
+  - **Forgot/reset**: captcha + one **unused recovery code** → set new password (`POST /api/auth/reset-password {identifier, recoveryCode, newPassword, captcha}`). Codes are case/format-insensitive, single-use (burned on success), and a reset revokes all sessions. Failures are uniform (`RESET_FAILED`) whether the account or code is wrong — no oracle
+- **Sessions & devices** — a user can see and manage their active logins: `GET /api/sessions` (each with a parsed device label, IP, timestamps, and a `current` flag for the caller's own session), `DELETE /api/sessions/:id` (log out that device), `POST /api/sessions/revoke-others` (log out all other devices). Backed by the `Session` model; current session is matched via the refresh-cookie hash. Revoking invalidates a session's refresh token immediately; its short-lived access token lapses within `ACCESS_TOKEN_TTL`. _(Multi-account switching is deferred to v2.)_
 - **KYC** — document upload + status lifecycle: `unverified → pending → approved / rejected`
 - **Account states** — `active` / `frozen` (admin-controlled); frozen users can log in but cannot transact
 
@@ -123,6 +124,7 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 
 ### 2.11 Admin API (role-based)
 - Roles: `user`, `admin`, `superadmin` (RBAC middleware)
+- **Bootstrap admin login** — env-configured `superadmin` signs in with email + password (no captcha) via `POST /api/auth/admin/login`; the account is created on first login (see 2.1)
 - Manage users (search, view, edit), freeze/unfreeze accounts
 - Credit/debit wallets — always via audited ledger entries with reason (response returns balance before/after)
 - **Impersonation ("login as user") — support tool**: `POST /api/admin/users/:id/impersonate` issues a short-lived (2h) access token authenticating **as the target user** but carrying the admin's id in an `imp` claim; **only the access cookie is overwritten**, so the admin's own refresh session survives and `POST /api/admin/impersonation/exit` (or any token refresh) restores it. Staff accounts are superadmin-only targets. While impersonating, `GET /api/auth/me` returns `impersonation.adminId` (frontend banner) and **every admin route is blocked** (`IMPERSONATION_ACTIVE`) so an impersonated session never carries staff powers. Start + exit are audited
@@ -165,9 +167,9 @@ src/
 |---|---|
 | **Landing** | Public (logged-out) marketing page explaining what the platform is and everything it offers: live-price ticker teaser, feature highlights (NGN + crypto wallets, trading, daily trading signals, 3-level referral program, secure withdrawals), how-it-works steps, trust/security notes (KYC, 2FA), Register + Login CTAs, links to Privacy/Terms; authenticated users are redirected to Home |
 | **Home** | Live market prices (BTC, ETH, USDT, NGN), wallet balance (₦), total profit/loss, Deposit + Withdraw buttons, referral earnings, latest announcements |
-| **Register** | Phone input with **country-code picker**, email, username, full name, password, referral code, **security question (dropdown from `GET /api/auth/security-questions`) + answer**, **captcha widget** (svg image + refresh), Terms & Privacy checkbox (**frontend-only gate** — submit disabled until checked) |
+| **Register** | Phone input with **country-code picker**, email, username, full name, password, referral code, **captcha widget** (svg image + refresh), Terms & Privacy checkbox (**frontend-only gate**). On success, **show the 10 one-time recovery codes once** with a "save these" prompt (download/copy) |
 | **Login** | Phone/email + password + **captcha**; **Google Authenticator (TOTP)** step when 2FA enabled |
-| **Forgot Password** | Captcha → security-question answer → set new password |
+| **Forgot Password** | Captcha → **one recovery code** → set new password |
 | **Dashboard** | Wallet balance, trading balance, total earnings, active trades, transaction history, referral income, verification status |
 | **Wallet** | NGN / USDT / BTC / ETH balances, convert between NGN and crypto, transaction list |
 | **Deposit** | Gateway checkout flow, deposit history |
@@ -178,7 +180,7 @@ src/
 | **Markets** | Price list with 24h change, volume, market depth |
 | **Team** | Referral link + **QR code** (view/download/share), total/active referrals, earnings per level |
 | **Notifications** | Bell icon with unread badge in the layout; notification list with mark-read |
-| **Mine / Profile** | Authentication (KYC), invite friends, earn rewards, deposit record, withdrawal record, password & security question, contract order (signal positions), about us, sign out |
+| **Mine / Profile** | Authentication (KYC), invite friends, earn rewards, deposit record, withdrawal record, password & **recovery codes** (view remaining / regenerate), **active sessions & devices** (see logins, "log out other devices"), contract order (signal positions), about us, sign out |
 | **Privacy / Terms** | Static legal pages, linked from the register checkbox |
 | **Admin UI** | User management (+ **impersonation** "login as user" with a persistent "viewing as" banner and exit button), withdrawals queue, deposits, signals management, spin credit grants + spin feed, announcements, audit log, notifications, reports (overview cards + daily charts) — can be a separate route group or app |
 
@@ -205,7 +207,7 @@ src/
 
 ## 5. Recommendations
 - **Terms enforcement** — the checkbox is frontend-only for now; if legal later requires proof of acceptance, add backend storage of `{ version, acceptedAt }` at that point
-- **Security-question resets are weaker than email resets** — always hash answers, normalize before hashing, and strictly rate-limit reset attempts (captcha already required)
+- **Recovery-code resets** (replaced security questions 2026-07-08) — codes are high-entropy and single-use, so they're stronger than guessable security answers; the frontend must make the user save them at registration (they're shown once). An email-based reset can be added later as a convenience once an email provider is wired
 - **Ledger-first design** — never mutate a balance without a ledger entry; makes admin credit/debit, signal settlements, reports, and dispute resolution auditable
 - **Provider abstraction** — one `PriceService` interface over CoinGecko/Binance/CMC; swap or fail over without touching business logic
 - **Regulatory** — the platform holds user funds: KYC/AML obligations and CBN/SEC (Nigeria) licensing considerations should be reviewed before launch
@@ -231,3 +233,5 @@ src/
 | — | Landing page (new requirement) | Frontend 3.1 (Landing) |
 | — | Spin & Win wheel (new requirement 2026-07-06) | Backend 2.8a + Frontend 3.1 (Spin & Win) |
 | — | Admin impersonation (new requirement 2026-07-06) | Backend 2.11 + Frontend 3.1 (Admin UI) |
+| — | Sessions & devices (new requirement 2026-07-08) | Backend 2.1 + Frontend 3.1 (Mine/Profile) |
+| — | Recovery codes — replaced security questions (2026-07-08) | Backend 2.1 + Frontend 3.1 (Register / Forgot Password) |

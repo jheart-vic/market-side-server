@@ -15,6 +15,12 @@ const schema = z
     ACCESS_TOKEN_TTL: z.string().default('15m'),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
     BCRYPT_ROUNDS: z.coerce.number().int().min(8).max(15).default(10),
+    // Bootstrap admin: env-configured superadmin that logs in with email +
+    // password (no captcha) and is created on first successful login. All three
+    // are required for POST /api/auth/admin/login to work (503 otherwise).
+    ADMIN_EMAIL: z.string().email().optional(),
+    ADMIN_PASSWORD: z.string().min(8).optional(),
+    ADMIN_PHONE: z.string().optional(), // E.164 — satisfies the User model's unique phone key
     CAPTCHA_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     CAPTCHA_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     // Cloudinary (KYC document uploads — private assets, signed delivery)

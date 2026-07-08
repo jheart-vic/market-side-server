@@ -20,3 +20,4 @@ export * as fxService from './fx.service.js';
 export * as reportService from './report.service.js';
 export * as spinService from './spin.service.js';
 export * as bankAccountService from './bankAccount.service.js';
+export * as sessionService from './session.service.js';

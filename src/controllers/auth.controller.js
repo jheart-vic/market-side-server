@@ -2,14 +2,9 @@ import * as authService from '../services/auth.service.js';
 import * as captchaService from '../services/captcha.service.js';
 import * as tokenService from '../services/token.service.js';
 import { COOKIES } from '../config/constants.js';
-import { SECURITY_QUESTIONS } from '../config/securityQuestions.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 const meta = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') });
-
-export const listSecurityQuestions = asyncHandler(async (req, res) => {
-  res.json({ success: true, questions: SECURITY_QUESTIONS });
-});
 
 export const getCaptcha = asyncHandler(async (req, res) => {
   const { purpose } = req.validated.query;
@@ -18,12 +13,13 @@ export const getCaptcha = asyncHandler(async (req, res) => {
 });
 
 export const register = asyncHandler(async (req, res) => {
-  const { user, accessToken, refreshToken } = await authService.register({
+  const { user, recoveryCodes, accessToken, refreshToken } = await authService.register({
     ...req.body,
     meta: meta(req),
   });
   tokenService.setAuthCookies(res, { accessToken, refreshToken });
-  res.status(201).json({ success: true, user });
+  // recoveryCodes are shown exactly once — the frontend must prompt the user to save them
+  res.status(201).json({ success: true, user, recoveryCodes });
 });
 
 export const login = asyncHandler(async (req, res) => {
@@ -32,6 +28,12 @@ export const login = asyncHandler(async (req, res) => {
     // password + captcha passed; frontend now shows the authenticator-code step
     return res.json({ success: true, requiresTotp: true });
   }
+  tokenService.setAuthCookies(res, result);
+  res.json({ success: true, user: result.user });
+});
+
+export const adminLogin = asyncHandler(async (req, res) => {
+  const result = await authService.adminLogin({ ...req.validated.body, meta: meta(req) });
   tokenService.setAuthCookies(res, result);
   res.json({ success: true, user: result.user });
 });
@@ -57,15 +59,9 @@ export const me = asyncHandler(async (req, res) => {
   });
 });
 
-export const getSecurityQuestion = asyncHandler(async (req, res) => {
-  const { identifier } = req.validated.query;
-  const result = await authService.getSecurityQuestion(identifier);
-  res.json({ success: true, ...result });
-});
-
 export const resetPassword = asyncHandler(async (req, res) => {
-  await authService.resetPassword(req.body);
-  res.json({ success: true, message: 'Password reset — log in with your new password' });
+  const result = await authService.resetPassword(req.validated.body);
+  res.json({ success: true, message: 'Password reset — log in with your new password', ...result });
 });
 
 export const changePassword = asyncHandler(async (req, res) => {
@@ -74,9 +70,10 @@ export const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password changed — log in again' });
 });
 
-export const changeSecurityQuestion = asyncHandler(async (req, res) => {
-  await authService.changeSecurityQuestion(req.user, req.body);
-  res.json({ success: true, message: 'Security question updated' });
+export const regenerateRecoveryCodes = asyncHandler(async (req, res) => {
+  const { recoveryCodes } = await authService.regenerateRecoveryCodes(req.user, req.validated.body);
+  // shown once — replaces any previous set
+  res.json({ success: true, recoveryCodes });
 });
 
 export const enable2fa = asyncHandler(async (req, res) => {

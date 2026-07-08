@@ -27,14 +27,18 @@ const userSchema = new Schema(
     fullName: { type: String, trim: true },
     passwordHash: { type: String, required: true, select: false },
 
-    // Password reset is captcha + security question (no SMS/email OTP).
-    // The question is picked from the predefined list in
-    // config/securityQuestions.js; questionId is its stable slug (accounts
-    // created before the list existed have free-text question only).
-    security: {
-      questionId: { type: String, default: null },
-      question: { type: String, required: true },
-      answerHash: { type: String, required: true, select: false },
+    // Password reset is captcha + a one-time recovery code (no SMS/email OTP,
+    // no security questions). Codes are issued at registration, shown once, and
+    // stored as fast hashes (utils/recoveryCodes) since they are high-entropy.
+    recoveryCodes: {
+      type: [
+        {
+          codeHash: { type: String, required: true },
+          usedAt: { type: Date, default: null },
+        },
+      ],
+      default: [],
+      select: false,
     },
 
     // Separate hashed PIN required for withdrawals; null until the user sets it

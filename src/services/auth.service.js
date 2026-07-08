@@ -2,15 +2,17 @@
 // TOTP 2FA (Google Authenticator), withdrawal PIN. Captcha guards register,
 // login, and password reset; cookies/sessions come from token.service.
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { generateSecret as generateTotpSecret, verify as verifyTotp, generateURI as totpUri } from 'otplib';
 import QRCode from 'qrcode';
 import { User } from '../models/User.js';
+import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { parsePhone } from '../utils/phone.js';
-import { hashValue, compareValue, normalizeSecurityAnswer } from '../utils/hash.js';
+import { hashValue, compareValue } from '../utils/hash.js';
 import { generateUniqueReferralCode } from '../utils/referralCode.js';
-import { getQuestionById } from '../config/securityQuestions.js';
+import { generateRecoveryCodes, hashRecoveryCode } from '../utils/recoveryCodes.js';
 import * as captchaService from './captcha.service.js';
 import * as tokenService from './token.service.js';
 import * as walletService from './wallet.service.js';
@@ -32,6 +34,14 @@ let decoyHashPromise;
 function equalizeAuthTiming(input) {
   if (!decoyHashPromise) decoyHashPromise = hashValue('timing-decoy-not-a-real-credential');
   return decoyHashPromise.then((hash) => compareValue(input, hash));
+}
+
+// Constant-time string equality (sha256 → fixed length so timingSafeEqual never
+// throws on length mismatch and no length is leaked). For the env admin creds.
+function constantTimeEqual(a, b) {
+  const ha = createHash('sha256').update(String(a)).digest();
+  const hb = createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(ha, hb);
 }
 
 /**
@@ -96,19 +106,11 @@ export async function register({
   fullName,
   password,
   referralCode,
-  securityQuestionId,
-  securityAnswer,
   captchaId,
   captchaAnswer,
   meta = {},
 }) {
   await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'register');
-
-  // The question must come from the predefined list — users don't invent one
-  const securityQuestion = getQuestionById(securityQuestionId);
-  if (!securityQuestion) {
-    throw ApiError.badRequest('Unknown security question', 'INVALID_SECURITY_QUESTION');
-  }
 
   const parsedPhone = parsePhone(phone);
   const normalizedEmail = String(email).trim().toLowerCase();
@@ -130,17 +132,17 @@ export async function register({
 
   const { referredBy, uplines } = await referralService.resolveReferrer(referralCode);
 
+  // One-time recovery codes for password reset — the plaintext set is shown to
+  // the user exactly once (returned here); only hashes are stored.
+  const { plain: recoveryCodes, stored: recoveryCodeHashes } = generateRecoveryCodes();
+
   const user = await User.create({
     phone: parsedPhone,
     email: normalizedEmail,
     username: normalizedUsername,
     fullName: fullName ? String(fullName).trim() : undefined,
     passwordHash: await hashValue(password),
-    security: {
-      questionId: securityQuestion.id,
-      question: securityQuestion.question,
-      answerHash: await hashValue(normalizeSecurityAnswer(securityAnswer)),
-    },
+    recoveryCodes: recoveryCodeHashes,
     referralCode: await generateUniqueReferralCode(User),
     referredBy,
     uplines,
@@ -155,7 +157,7 @@ export async function register({
 
   const accessToken = await tokenService.signAccessToken(user);
   const { refreshToken } = await tokenService.createSession(user, meta);
-  return { user: toSafeUser(user), accessToken, refreshToken };
+  return { user: toSafeUser(user), recoveryCodes, accessToken, refreshToken };
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +213,59 @@ export async function login({ identifier, password, captchaId, captchaAnswer, to
   return { user: toSafeUser(user), accessToken, refreshToken };
 }
 
+// ---------------------------------------------------------------------------
+// Admin login (env-bootstrapped superadmin) — no captcha, no registration.
+// Credentials live in ADMIN_EMAIL/ADMIN_PASSWORD (env is the source of truth,
+// checked on every login). The backing User row is created on first successful
+// login so JWT sub, RBAC, audit, and impersonation all have a real actor.
+// ---------------------------------------------------------------------------
+
+/** Create the bootstrap superadmin the first time correct env creds are used. */
+async function createBootstrapAdmin(meta = {}) {
+  const parsedPhone = parsePhone(env.ADMIN_PHONE);
+  const admin = await User.create({
+    phone: parsedPhone,
+    email: env.ADMIN_EMAIL.toLowerCase(),
+    fullName: 'Administrator',
+    passwordHash: await hashValue(env.ADMIN_PASSWORD),
+    // No recovery codes — the admin authenticates from env creds, not the reset flow
+    role: 'superadmin',
+    referralCode: await generateUniqueReferralCode(User),
+    knownDevices: [{ ip: meta.ip, userAgent: meta.userAgent }],
+    lastLoginAt: new Date(),
+  });
+  await walletService.createWalletsForUser(admin._id);
+  logger.info({ adminId: String(admin._id) }, 'bootstrap admin created from env credentials');
+  return admin;
+}
+
+export async function adminLogin({ email, password, meta = {} }) {
+  if (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD || !env.ADMIN_PHONE) {
+    throw new ApiError(503, 'Admin login is not configured on this server', 'ADMIN_NOT_CONFIGURED');
+  }
+
+  // Both checks always run (no early return) so a wrong email and a wrong
+  // password are indistinguishable by timing.
+  const emailOk = constantTimeEqual(String(email ?? '').trim().toLowerCase(), env.ADMIN_EMAIL.toLowerCase());
+  const passwordOk = constantTimeEqual(String(password ?? ''), env.ADMIN_PASSWORD);
+  if (!emailOk || !passwordOk) throw AUTH_FAILED();
+
+  let admin = await User.findOne({ email: env.ADMIN_EMAIL.toLowerCase() });
+  if (!admin) admin = await createBootstrapAdmin(meta);
+
+  if (admin.status === 'frozen') {
+    throw ApiError.forbidden('Admin account is suspended', 'ADMIN_SUSPENDED');
+  }
+  // Ensure the row carries admin powers (e.g. if it predates this flow / was demoted)
+  if (admin.role !== 'admin' && admin.role !== 'superadmin') admin.role = 'superadmin';
+  admin.lastLoginAt = new Date();
+  await admin.save();
+
+  const accessToken = await tokenService.signAccessToken(admin);
+  const { refreshToken } = await tokenService.createSession(admin, meta);
+  return { user: toSafeUser(admin), accessToken, refreshToken };
+}
+
 export async function refresh(refreshToken, meta = {}) {
   if (!refreshToken) throw ApiError.unauthorized('Missing refresh token', 'INVALID_REFRESH');
   const { refreshToken: nextRefreshToken, session } = await tokenService.rotateSession(refreshToken, meta);
@@ -225,30 +280,37 @@ export async function logout(refreshToken) {
 }
 
 // ---------------------------------------------------------------------------
-// Password + security question (reset flow is captcha + security answer)
+// Password + recovery codes (reset flow is captcha + a one-time recovery code)
 // ---------------------------------------------------------------------------
 
-export async function getSecurityQuestion(identifier) {
-  const user = await findByIdentifier(identifier);
-  if (!user) throw ApiError.notFound('No account matches that phone/email', 'ACCOUNT_NOT_FOUND');
-  return { question: user.security.question };
-}
-
-export async function resetPassword({ identifier, answer, newPassword, captchaId, captchaAnswer }) {
+export async function resetPassword({ identifier, recoveryCode, newPassword, captchaId, captchaAnswer }) {
   await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'password_reset');
 
-  const user = await findByIdentifier(identifier, '+security.answerHash');
-  if (!user) {
-    await equalizeAuthTiming(normalizeSecurityAnswer(answer)); // decoy compare — same timing as a real answer check
-    throw ApiError.badRequest('Password reset failed', 'RESET_FAILED');
-  }
-  if (!(await compareValue(normalizeSecurityAnswer(answer), user.security.answerHash))) {
-    throw ApiError.badRequest('Password reset failed', 'RESET_FAILED'); // same error — no oracle
-  }
+  const user = await findByIdentifier(identifier, '+recoveryCodes');
+  // Uniform failure whether the account or the code is wrong — no oracle. The
+  // code is a fast sha256 compare, so unknown-account timing isn't a signal.
+  const codeHash = hashRecoveryCode(recoveryCode);
+  const entry = user?.recoveryCodes?.find((c) => c.codeHash === codeHash && !c.usedAt);
+  if (!user || !entry) throw ApiError.badRequest('Password reset failed', 'RESET_FAILED');
 
+  entry.usedAt = new Date(); // one-time: burn the code
   user.passwordHash = await hashValue(newPassword);
   await user.save();
   await tokenService.revokeAllForUser(user._id); // force re-login everywhere
+
+  return { recoveryCodesRemaining: user.recoveryCodes.filter((c) => !c.usedAt).length };
+}
+
+/** Issue a fresh set of recovery codes (password re-entry required). Invalidates the old set. */
+export async function regenerateRecoveryCodes(user, { password }) {
+  const withHash = await User.findById(user._id).select('+passwordHash');
+  if (!(await compareValue(password, withHash.passwordHash))) {
+    throw ApiError.badRequest('Password is incorrect', 'WRONG_PASSWORD');
+  }
+  const { plain, stored } = generateRecoveryCodes();
+  withHash.recoveryCodes = stored;
+  await withHash.save();
+  return { recoveryCodes: plain };
 }
 
 export async function changePassword(user, { currentPassword, newPassword }) {
@@ -259,22 +321,6 @@ export async function changePassword(user, { currentPassword, newPassword }) {
   withHash.passwordHash = await hashValue(newPassword);
   await withHash.save();
   await tokenService.revokeAllForUser(user._id);
-}
-
-export async function changeSecurityQuestion(user, { password, questionId, answer }) {
-  const question = getQuestionById(questionId);
-  if (!question) throw ApiError.badRequest('Unknown security question', 'INVALID_SECURITY_QUESTION');
-
-  const withHash = await User.findById(user._id).select('+passwordHash');
-  if (!(await compareValue(password, withHash.passwordHash))) {
-    throw ApiError.badRequest('Password is incorrect', 'WRONG_PASSWORD');
-  }
-  withHash.security = {
-    questionId: question.id,
-    question: question.question,
-    answerHash: await hashValue(normalizeSecurityAnswer(answer)),
-  };
-  await withHash.save();
 }
 
 // ---------------------------------------------------------------------------

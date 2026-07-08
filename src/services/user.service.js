@@ -16,8 +16,8 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function toProfile(user) {
   return {
     ...toSafeUser(user),
-    securityQuestionId: user.security?.questionId ?? null,
-    securityQuestion: user.security?.question,
+    // count only — codes themselves are write-once and never returned on reads
+    recoveryCodesRemaining: (user.recoveryCodes ?? []).filter((c) => !c.usedAt).length,
     kyc: {
       status: user.kyc?.status,
       // Documents are private Cloudinary assets — expose short-lived signed URLs
@@ -35,7 +35,8 @@ function toProfile(user) {
 }
 
 async function mustFind(userId) {
-  const user = await User.findById(userId);
+  // +recoveryCodes so profile responses can report the remaining count
+  const user = await User.findById(userId).select('+recoveryCodes');
   if (!user) throw ApiError.notFound('User not found', 'USER_NOT_FOUND');
   return user;
 }

@@ -78,6 +78,22 @@ try {
   );
   console.log('✓ wrong password rejected');
 
+  // --- captcha survives a wrong-password attempt (consumed only on success) ---
+  const retryCap = await seedCaptcha('login');
+  await assert.rejects(
+    auth.login({ identifier: testEmail, password: 'nope', ...retryCap, meta }),
+    /Invalid credentials/,
+  );
+  // same challenge, now with the RIGHT password → must succeed (not CAPTCHA_INVALID)
+  const retryOk = await auth.login({ identifier: testEmail, password: 'Passw0rd!x', ...retryCap, meta });
+  assert.ok(retryOk.accessToken, 'captcha reusable after a wrong-password attempt');
+  // and once consumed by success, it cannot be reused
+  await assert.rejects(
+    auth.login({ identifier: testEmail, password: 'Passw0rd!x', ...retryCap, meta }),
+    /Captcha verification failed/,
+  );
+  console.log('✓ captcha reusable after wrong password, spent on success');
+
   // --- unknown identifier: same error as wrong password (timing-decoy path, no enumeration) ---
   await assert.rejects(
     auth.login({ identifier: 'nobody@nowhere.test', password: 'nope', ...(await seedCaptcha('login')), meta }),

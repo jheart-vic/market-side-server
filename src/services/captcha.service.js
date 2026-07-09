@@ -26,13 +26,15 @@ export async function createChallenge(purpose) {
   return { captchaId: captcha.id, svg: data };
 }
 
-/**
- * Validate an answer and consume the challenge. Throws on any failure; a
- * correct answer flips `used` atomically so a challenge can never be spent twice.
- */
-export async function verifyAndConsume(captchaId, answer, purpose) {
-  const invalid = () => ApiError.badRequest('Captcha verification failed', 'CAPTCHA_INVALID');
+const invalid = () => ApiError.badRequest('Captcha verification failed', 'CAPTCHA_INVALID');
 
+/**
+ * Validate an answer WITHOUT consuming the challenge. Throws on any failure and
+ * counts wrong answers toward the attempt cap. Used by multi-step flows (login,
+ * which may bounce through a TOTP step) so the challenge stays valid until the
+ * flow fully succeeds — call `consume` then.
+ */
+export async function verify(captchaId, answer, purpose) {
   const captcha = await Captcha.findById(captchaId).catch(() => null);
   if (!captcha || captcha.purpose !== purpose || captcha.used) throw invalid();
   if (captcha.expiresAt <= new Date()) throw invalid();
@@ -42,10 +44,23 @@ export async function verifyAndConsume(captchaId, answer, purpose) {
     await Captcha.updateOne({ _id: captcha._id }, { $inc: { attempts: 1 } });
     throw invalid();
   }
+  return captcha._id;
+}
 
+/** Spend a challenge so it can never be reused (atomic; safe against races). */
+export async function consume(captchaId) {
   const consumed = await Captcha.findOneAndUpdate(
-    { _id: captcha._id, used: false },
+    { _id: captchaId, used: false },
     { $set: { used: true } },
   );
-  if (!consumed) throw invalid(); // raced with a parallel verify
+  if (!consumed) throw invalid();
+}
+
+/**
+ * Validate and consume in one shot — for single-step flows (register, password
+ * reset) where there is nothing between check and success.
+ */
+export async function verifyAndConsume(captchaId, answer, purpose) {
+  await verify(captchaId, answer, purpose);
+  await consume(captchaId);
 }

@@ -165,7 +165,10 @@ export async function register({
 // ---------------------------------------------------------------------------
 
 export async function login({ identifier, password, captchaId, captchaAnswer, totp, meta = {} }) {
-  await captchaService.verifyAndConsume(captchaId, captchaAnswer, 'login');
+  // Verify but DON'T consume yet: the captcha must survive a wrong-password retry
+  // and the 2FA two-step (first call returns requiresTotp, the TOTP call reuses
+  // the same challenge). It's spent only once the login fully succeeds.
+  await captchaService.verify(captchaId, captchaAnswer, 'login');
 
   const user = await findByIdentifier(identifier, '+passwordHash +twoFactor.secret +knownDevices');
   if (!user) {
@@ -175,12 +178,16 @@ export async function login({ identifier, password, captchaId, captchaAnswer, to
   if (!(await compareValue(password, user.passwordHash))) throw AUTH_FAILED();
 
   if (user.twoFactor.enabled) {
-    // First step passed but no TOTP yet — tell the frontend to show the 2FA screen
+    // First step passed but no TOTP yet — tell the frontend to show the 2FA
+    // screen. Captcha stays valid so the follow-up TOTP call can reuse it.
     if (!totp) return { requiresTotp: true };
     if (!(await checkTotp(totp, user.twoFactor.secret))) {
       throw ApiError.unauthorized('Invalid authenticator code', 'INVALID_TOTP');
     }
   }
+
+  // Fully authenticated — now the captcha is spent.
+  await captchaService.consume(captchaId);
 
   // Login alert on unknown device/IP (frozen users may still log in — SPEC §2.1)
   const known = user.knownDevices.some(

@@ -19,6 +19,22 @@ const totp = z.string().regex(/^\d{6}$/, 'must be a 6-digit code');
 const pin = z.string().regex(/^\d{4,6}$/, 'must be 4-6 digits');
 const recoveryCode = z.string().trim().min(8).max(20); // e.g. "A3F9K-2M7QX"
 
+// Shared registration payload (normal sign-up + "create account" in the switcher)
+const registerFields = {
+  phone: z.string().min(7).max(20),
+  email: z.string().email(),
+  username: z
+    .string()
+    .trim()
+    .min(3)
+    .max(30)
+    .regex(/^[a-zA-Z0-9_]+$/, 'letters, numbers, and underscores only'),
+  fullName: z.string().trim().min(2).max(100),
+  password,
+  referralCode: z.string().trim().min(4).max(12).optional(),
+  ...captchaFields,
+};
+
 // --- public ---
 router.get(
   '/captcha',
@@ -30,22 +46,7 @@ router.get(
 router.post(
   '/register',
   authLimiter,
-  validate({
-    body: z.object({
-      phone: z.string().min(7).max(20),
-      email: z.string().email(),
-      username: z
-        .string()
-        .trim()
-        .min(3)
-        .max(30)
-        .regex(/^[a-zA-Z0-9_]+$/, 'letters, numbers, and underscores only'),
-      fullName: z.string().trim().min(2).max(100),
-      password,
-      referralCode: z.string().trim().min(4).max(12).optional(),
-      ...captchaFields,
-    }),
-  }),
+  validate({ body: z.object(registerFields) }),
   ctrl.register,
 );
 
@@ -107,5 +108,46 @@ router.post(
   validate({ body: z.object({ pin, totp: totp.optional(), password: z.string().min(1).optional() }) }),
   ctrl.setWithdrawalPin,
 );
+
+// --- multi-account switcher (Gmail-style, requires an active session) --------
+const userId = z.string().length(24); // Mongo ObjectId hex
+
+router.get('/accounts', requireAuth, ctrl.listAccounts);
+
+// Add another account: a full login folded into the switcher (rate-limited like login)
+router.post(
+  '/accounts/add',
+  requireAuth,
+  authLimiter,
+  validate({
+    body: z.object({ identifier, password: z.string().min(1).max(128), totp: totp.optional(), ...captchaFields }),
+  }),
+  ctrl.addAccount,
+);
+
+// Create a brand-new account and fold it into the switcher (Gmail "create account")
+router.post(
+  '/accounts/register',
+  requireAuth,
+  authLimiter,
+  validate({ body: z.object(registerFields) }),
+  ctrl.registerAccount,
+);
+
+router.post(
+  '/accounts/switch',
+  requireAuth,
+  validate({ body: z.object({ userId }) }),
+  ctrl.switchAccount,
+);
+
+router.post(
+  '/accounts/remove',
+  requireAuth,
+  validate({ body: z.object({ userId }) }),
+  ctrl.removeAccount,
+);
+
+router.post('/accounts/logout-others', requireAuth, ctrl.logoutOtherAccounts);
 
 export default router;

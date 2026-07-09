@@ -15,6 +15,7 @@ import {
   PLATFORM_CURRENCY,
 } from '../config/constants.js';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { parsePagination, paginationMeta } from '../utils/pagination.js';
 import {
@@ -26,6 +27,7 @@ import {
 import * as ledgerService from './ledger.service.js';
 import * as notificationService from './notification.service.js';
 import * as auditService from './audit.service.js';
+import { sameLinkGroup } from './multiAccount.service.js';
 
 /**
  * Resolve a referral code into the tree fields stored on a new user:
@@ -99,11 +101,19 @@ export async function payCommissions({ event, sourceUser, baseAmount, sourceRef 
     throw ApiError.badRequest(`Unknown referral event: ${event}`, 'INVALID_REFERRAL_EVENT');
   }
 
-  const source = await User.findById(sourceUser).select('uplines phone.e164');
+  const source = await User.findById(sourceUser).select('uplines phone.e164 linkGroupId');
   if (!source || source.uplines.length === 0) return [];
 
   const rates = await getRates();
   const paid = [];
+
+  // Anti-abuse: never pay commission to an upline that shares a multi-account
+  // link group with the source (self-referral via linked accounts).
+  const uplineGroups = new Map();
+  if (source.linkGroupId) {
+    const uplineDocs = await User.find({ _id: { $in: source.uplines } }).select('linkGroupId');
+    for (const u of uplineDocs) uplineGroups.set(String(u._id), u.linkGroupId);
+  }
 
   for (let i = 0; i < Math.min(source.uplines.length, REFERRAL_LEVELS); i++) {
     const level = i + 1;
@@ -113,6 +123,13 @@ export async function payCommissions({ event, sourceUser, baseAmount, sourceRef 
     if (amount <= 0n) continue;
 
     const beneficiary = source.uplines[i];
+    if (sameLinkGroup(source.linkGroupId, uplineGroups.get(String(beneficiary)))) {
+      logger.info(
+        { source: String(source._id), beneficiary: String(beneficiary), level },
+        'referral commission skipped — linked accounts',
+      );
+      continue;
+    }
     const { groupId } = await ledgerService.credit({
       user: beneficiary,
       currency: PLATFORM_CURRENCY,

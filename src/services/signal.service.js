@@ -1,11 +1,14 @@
 // SignalService (SPEC §2.7) — admin-published "contract order" signals with a
-// binary-options mechanic: the user stakes dollars and picks CALL/PUT; entry
-// and settlement prices (NGN-quoted, from our own PriceService cache) decide
-// win (stake + fixed return %) or loss (full stake forfeited — no tie: an
-// unchanged price counts as a loss). Release job publishes scheduled signals
-// daily within 15:00–17:00 Africa/Lagos; contracts may only be placed inside
-// each signal's own trading window. Stakes are held via LedgerService; the
-// unique (user, signal) index enforces one contract per user per signal.
+// binary-options mechanic and ADMIN-DECIDED outcome: the admin picks the winning
+// side (`direction`, hidden from users); the user stakes dollars and picks
+// CALL/PUT blind, and wins (stake + fixed return %) iff their pick matches the
+// admin's, otherwise the full stake is forfeited. Entry/settle prices are still
+// snapshotted (real market, for display) but do NOT decide the outcome. Signals
+// go live inside the admin-configured release window (settings
+// signal_release_start/end, Lagos) — created inside the window they release
+// immediately; contracts may be placed on a released signal only while the clock
+// is still inside that window. Stakes are held via LedgerService; the unique
+// (user, signal) index enforces one contract per user per signal.
 
 import mongoose from 'mongoose';
 import { Signal } from '../models/Signal.js';
@@ -18,7 +21,7 @@ import {
 import { logger } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { parsePagination, paginationMeta } from '../utils/pagination.js';
-import { lagosParts, lagosDayKey, isWithinSignalWindow } from '../utils/time.js';
+import { lagosParts, lagosDayKey } from '../utils/time.js';
 import {
   toSmallestUnits,
   fromSmallestUnits,
@@ -30,8 +33,8 @@ import * as priceService from './price.service.js';
 import * as ledgerService from './ledger.service.js';
 import * as notificationService from './notification.service.js';
 import * as auditService from './audit.service.js';
+import * as settingsService from './settings.service.js';
 
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const minutesOf = (hhmm) => {
@@ -39,29 +42,50 @@ const minutesOf = (hhmm) => {
   return h * 60 + m;
 };
 
-/** True while the Lagos wall clock sits inside the signal's trading window. */
-export function isInTradingWindow(signal, date = new Date()) {
-  const { hour, minute } = lagosParts(date);
-  const now = hour * 60 + minute;
-  return now >= minutesOf(signal.tradingStart) && now < minutesOf(signal.tradingEnd);
+/** Admin-configured release window (Lagos HH:mm) → { startMin, endMin }. */
+async function releaseWindow() {
+  const settings = await settingsService.getSettings();
+  return {
+    startMin: minutesOf(settings.signal_release_start),
+    endMin: minutesOf(settings.signal_release_end),
+  };
 }
 
-function toDisplaySignal(signal) {
+/** True while the Lagos wall clock sits inside the release window. */
+export async function isWithinReleaseWindow(date = new Date()) {
+  const { hour, minute } = lagosParts(date);
+  const now = hour * 60 + minute;
+  const { startMin, endMin } = await releaseWindow();
+  return now >= startMin && now < endMin;
+}
+
+/**
+ * A released signal is tradeable while it belongs to today and the clock is
+ * still inside the release window. Async because the window lives in settings.
+ */
+async function isTradeable(signal, date = new Date()) {
+  return (
+    signal.status === 'released' &&
+    signal.releaseDay === lagosDayKey(date) &&
+    (await isWithinReleaseWindow(date))
+  );
+}
+
+// `direction` is the admin's secret winning side — never expose it to users.
+async function toDisplaySignal(signal, { includeDirection = false } = {}) {
   return {
     id: signal.id,
     pair: signal.pair,
-    direction: signal.direction,
+    ...(includeDirection ? { direction: signal.direction } : {}),
     returnPct: signal.returnPct,
     minStake: fromSmallestUnits(decimal128ToBigInt(signal.minStake), PLATFORM_CURRENCY),
     maxStake: fromSmallestUnits(decimal128ToBigInt(signal.maxStake), PLATFORM_CURRENCY),
     currency: PLATFORM_CURRENCY,
     durationSeconds: signal.durationSeconds,
-    tradingStart: signal.tradingStart,
-    tradingEnd: signal.tradingEnd,
     releaseDay: signal.releaseDay,
     releasedAt: signal.releasedAt,
     status: signal.status,
-    inTradingWindow: signal.status === 'released' && isInTradingWindow(signal),
+    tradeable: await isTradeable(signal),
   };
 }
 
@@ -72,11 +96,11 @@ function toDisplayPosition(position) {
       ? {
           id: position.signal.id,
           pair: position.signal.pair,
-          direction: position.signal.direction,
+          // signal.direction (admin's winning side) is intentionally omitted
           durationSeconds: position.signal.durationSeconds,
         }
       : position.signal,
-    direction: position.direction,
+    direction: position.direction, // the user's own pick — fine to show
     stake: fromSmallestUnits(decimal128ToBigInt(position.stake), PLATFORM_CURRENCY),
     currency: PLATFORM_CURRENCY,
     returnPct: position.returnPct,
@@ -116,21 +140,21 @@ export async function createSignal(admin, data) {
     minStake,
     maxStake,
     durationSeconds,
-    tradingStart,
-    tradingEnd,
     releaseDay = lagosDayKey(),
   } = data;
 
   if (!SIGNAL_PAIRS.includes(pair)) throw ApiError.badRequest(`Pair must be one of: ${SIGNAL_PAIRS.join(', ')}`, 'INVALID_PAIR');
   if (!SIGNAL_DIRECTIONS.includes(direction)) throw ApiError.badRequest('Direction must be call or put', 'INVALID_DIRECTION');
-  if (!HHMM_RE.test(tradingStart) || !HHMM_RE.test(tradingEnd) || minutesOf(tradingStart) >= minutesOf(tradingEnd)) {
-    throw ApiError.badRequest('Trading window must be valid HH:mm with start before end', 'INVALID_WINDOW');
-  }
   if (!DAY_RE.test(releaseDay)) throw ApiError.badRequest('releaseDay must be YYYY-MM-DD', 'INVALID_DAY');
 
   const min = toSmallestUnits(minStake, PLATFORM_CURRENCY);
   const max = toSmallestUnits(maxStake, PLATFORM_CURRENCY);
   if (min <= 0n || max < min) throw ApiError.badRequest('Stake bounds invalid (min > 0, max >= min)', 'INVALID_STAKES');
+
+  // A signal created for today while the clock is inside the release window goes
+  // live immediately (and is therefore instantly tradeable). Otherwise it stays
+  // scheduled for the release job to publish when the window opens.
+  const goLiveNow = releaseDay === lagosDayKey() && (await isWithinReleaseWindow());
 
   const signal = await Signal.create({
     pair,
@@ -139,18 +163,20 @@ export async function createSignal(admin, data) {
     minStake: bigIntToDecimal128(min),
     maxStake: bigIntToDecimal128(max),
     durationSeconds,
-    tradingStart,
-    tradingEnd,
     releaseDay,
+    status: goLiveNow ? 'released' : 'scheduled',
+    releasedAt: goLiveNow ? new Date() : undefined,
     createdBy: admin._id,
   });
+  if (goLiveNow) notificationService.broadcast('signal_released', await toDisplaySignal(signal));
+
   await auditService.record({
     actor: admin,
     action: 'signal.create',
     target: { kind: 'Signal', item: signal._id },
-    meta: { pair, direction, returnPct, releaseDay },
+    meta: { pair, direction, returnPct, releaseDay, released: goLiveNow },
   });
-  return toDisplaySignal(signal);
+  return toDisplaySignal(signal, { includeDirection: true });
 }
 
 /** Editable only while still scheduled — released signals may already have money on them. */
@@ -160,15 +186,12 @@ export async function updateSignal(admin, id, patch) {
     throw ApiError.conflict('Only scheduled signals can be edited', 'SIGNAL_NOT_EDITABLE');
   }
 
-  const editable = ['pair', 'direction', 'returnPct', 'durationSeconds', 'tradingStart', 'tradingEnd', 'releaseDay'];
+  const editable = ['pair', 'direction', 'returnPct', 'durationSeconds', 'releaseDay'];
   for (const key of editable) {
     if (patch[key] !== undefined) signal[key] = patch[key];
   }
   if (patch.minStake !== undefined) signal.minStake = bigIntToDecimal128(toSmallestUnits(patch.minStake, PLATFORM_CURRENCY));
   if (patch.maxStake !== undefined) signal.maxStake = bigIntToDecimal128(toSmallestUnits(patch.maxStake, PLATFORM_CURRENCY));
-  if (minutesOf(signal.tradingStart) >= minutesOf(signal.tradingEnd)) {
-    throw ApiError.badRequest('Trading window must have start before end', 'INVALID_WINDOW');
-  }
   await signal.save();
 
   await auditService.record({
@@ -177,7 +200,31 @@ export async function updateSignal(admin, id, patch) {
     target: { kind: 'Signal', item: signal._id },
     meta: { patch: Object.keys(patch) },
   });
-  return toDisplaySignal(signal);
+  return toDisplaySignal(signal, { includeDirection: true });
+}
+
+/** Hard-delete a signal that has no contracts on it. If users have taken it,
+ * refuse and point to cancel (which refunds). Settled signals are immutable. */
+export async function deleteSignal(admin, id) {
+  const signal = await mustFindSignal(id);
+  if (signal.status === 'settled') {
+    throw ApiError.conflict('Cannot delete a settled signal', 'SIGNAL_SETTLED');
+  }
+  const positions = await SignalPosition.countDocuments({ signal: signal._id });
+  if (positions > 0) {
+    throw ApiError.conflict(
+      'This signal has contracts on it — cancel it instead (refunds users)',
+      'SIGNAL_HAS_POSITIONS',
+    );
+  }
+  await Signal.deleteOne({ _id: signal._id });
+  await auditService.record({
+    actor: admin,
+    action: 'signal.delete',
+    target: { kind: 'Signal', item: signal._id },
+    meta: { pair: signal.pair, status: signal.status, releaseDay: signal.releaseDay },
+  });
+  return { id: signal.id, deleted: true };
 }
 
 /** Cancel a scheduled/released signal; open positions are refunded in full. */
@@ -222,7 +269,7 @@ export async function cancelSignal(admin, id, reason) {
     target: { kind: 'Signal', item: signal._id },
     meta: { reason, refundedPositions: openPositions.length },
   });
-  return { id: signal.id, status: signal.status, refundedPositions: openPositions.length };
+  return { id: signal.id, status: 'cancelled', refundedPositions: openPositions.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -230,11 +277,11 @@ export async function cancelSignal(admin, id, reason) {
 // ---------------------------------------------------------------------------
 
 /**
- * Publish today's scheduled signals — only fires inside the 15:00–17:00 Lagos
+ * Publish today's scheduled signals — only fires inside the admin-configured
  * release window (pass force:true for a manual admin release outside it).
  */
 export async function releaseDueSignals({ force = false } = {}) {
-  if (!force && !isWithinSignalWindow()) return { released: 0 };
+  if (!force && !(await isWithinReleaseWindow())) return { released: 0 };
 
   const due = await Signal.find({ status: 'scheduled', releaseDay: lagosDayKey() });
   for (const signal of due) {
@@ -243,7 +290,7 @@ export async function releaseDueSignals({ force = false } = {}) {
     await signal.save();
     // Socket broadcast only — a Notification row per user per signal would flood
     // the collection daily; the signals screen is the canonical list.
-    notificationService.broadcast('signal_released', toDisplaySignal(signal));
+    notificationService.broadcast('signal_released', await toDisplaySignal(signal));
   }
   if (due.length) logger.info({ count: due.length }, 'Signals released');
   return { released: due.length };
@@ -253,13 +300,13 @@ export async function releaseDueSignals({ force = false } = {}) {
 // Listing
 // ---------------------------------------------------------------------------
 
-/** Today's released signals (the user-facing "contract order" screen). */
+/** Today's released signals (the user-facing "contract order" screen). Direction hidden. */
 export async function listActive() {
   const signals = await Signal.find({ status: 'released', releaseDay: lagosDayKey() }).sort({ releasedAt: -1 });
-  return signals.map(toDisplaySignal);
+  return Promise.all(signals.map((s) => toDisplaySignal(s)));
 }
 
-/** Admin: every signal for a Lagos day, any status. */
+/** Admin: every signal for a Lagos day, any status. Includes the (hidden) direction. */
 export async function listForDay(dayKey = lagosDayKey(), query = {}) {
   const { page, limit, skip } = parsePagination(query);
   const filter = { releaseDay: dayKey };
@@ -267,7 +314,8 @@ export async function listForDay(dayKey = lagosDayKey(), query = {}) {
     Signal.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Signal.countDocuments(filter),
   ]);
-  return { items: signals.map(toDisplaySignal), meta: paginationMeta(total, page, limit) };
+  const items = await Promise.all(signals.map((s) => toDisplaySignal(s, { includeDirection: true })));
+  return { items, meta: paginationMeta(total, page, limit) };
 }
 
 // ---------------------------------------------------------------------------
@@ -283,9 +331,10 @@ export async function placeOrder(user, signalId, { stake, direction }) {
   if (signal.status !== 'released') {
     throw ApiError.conflict('Signal is not open for orders', 'SIGNAL_NOT_OPEN');
   }
-  if (!isInTradingWindow(signal)) {
+  if (!(await isTradeable(signal))) {
+    const { signal_release_start: s, signal_release_end: e } = await settingsService.getSettings();
     throw ApiError.conflict(
-      `Orders are only accepted ${signal.tradingStart}–${signal.tradingEnd} (Lagos time)`,
+      `Contracts are only accepted while signals are live (${s}–${e} Lagos time)`,
       'OUTSIDE_TRADING_WINDOW',
     );
   }
@@ -352,10 +401,11 @@ export async function placeOrder(user, signalId, { stake, direction }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Sweep due open positions: snapshot the settle price, decide win/lose, and
- * write the ledger settlement. Right direction → stake + return %; wrong or
- * unchanged → stake forfeited. Each position settles independently so one
- * failure never blocks the sweep.
+ * Sweep due open positions: decide win/lose and write the ledger settlement.
+ * Outcome is ADMIN-DECIDED — the user wins iff their pick matches the signal's
+ * (hidden) direction; real price movement does not decide it. The settle price
+ * is still snapshotted (best-effort, real market) for display only. Each
+ * position settles independently so one failure never blocks the sweep.
  */
 export async function settleDuePositions(now = new Date()) {
   const due = await SignalPosition.find({ status: 'open', settlesAt: { $lte: now } }).populate(
@@ -366,12 +416,16 @@ export async function settleDuePositions(now = new Date()) {
   let settled = 0;
   for (const position of due) {
     try {
-      const settlePrice = await priceService.getPriceKobo(position.signal.pair);
-      const entry = decimal128ToBigInt(position.entryPrice);
+      // Display-only snapshot; never blocks settlement if the price feed hiccups.
+      let settlePrice = null;
+      try {
+        settlePrice = await priceService.getPriceKobo(position.signal.pair);
+      } catch (priceErr) {
+        logger.warn({ priceErr, position: position.id }, 'settle-price snapshot failed (cosmetic)');
+      }
       const stake = decimal128ToBigInt(position.stake);
-      const won =
-        (position.direction === 'call' && settlePrice > entry) ||
-        (position.direction === 'put' && settlePrice < entry); // equal price = loss (no tie)
+      // Admin-decided: the user's pick must match the signal's winning direction.
+      const won = position.direction === position.signal.direction;
       const payout = won ? stake + percentOf(stake, position.returnPct) : 0n;
 
       const entries = [
@@ -401,7 +455,7 @@ export async function settleDuePositions(now = new Date()) {
       ];
       const { groupId } = await ledgerService.post(entries);
 
-      position.settlePrice = bigIntToDecimal128(settlePrice);
+      if (settlePrice != null) position.settlePrice = bigIntToDecimal128(settlePrice);
       position.outcome = won ? 'win' : 'lose';
       position.payout = bigIntToDecimal128(payout);
       position.status = 'settled';

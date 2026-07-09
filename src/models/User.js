@@ -79,6 +79,12 @@ const userSchema = new Schema(
     // granted by an admin; consumed one per spin (atomic conditional $inc)
     spinCredits: { type: Number, default: 0, min: 0 },
 
+    // Multi-account linkage: accounts signed into the same browser are unioned
+    // into one group (union-find). Durable (survives later unlinking) so the
+    // anti-abuse block on cross-account referral/spin benefit can't be dodged by
+    // unlinking. null = not linked to anyone.
+    linkGroupId: { type: Schema.Types.ObjectId, default: null },
+
     // Login-alert baseline: alert (in-app + email) when a login doesn't match any known device
     knownDevices: { type: [knownDeviceSchema], default: [], select: false },
     lastLoginAt: Date,
@@ -88,5 +94,6 @@ const userSchema = new Schema(
 
 userSchema.index({ referredBy: 1 });
 userSchema.index({ uplines: 1 });
+userSchema.index({ linkGroupId: 1 });
 
 export const User = mongoose.model('User', userSchema);

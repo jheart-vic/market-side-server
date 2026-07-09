@@ -240,6 +240,11 @@ export const cancelSignal = asyncHandler(async (req, res) => {
   res.json({ success: true, ...result });
 });
 
+export const deleteSignal = asyncHandler(async (req, res) => {
+  const result = await signalService.deleteSignal(req.user, req.validated.params.id);
+  res.json({ success: true, ...result });
+});
+
 export const releaseSignals = asyncHandler(async (req, res) => {
   // manual trigger; force bypasses the 3–5 pm Lagos release window
   const result = await signalService.releaseDueSignals({ force: req.validated.body.force === true });

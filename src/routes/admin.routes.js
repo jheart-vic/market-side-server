@@ -213,6 +213,9 @@ router.put(
         .optional(),
       spin_bonus_every: z.number().int().min(2).max(1000).optional(),
       spin_referral_reward: z.number().int().min(0).max(10).optional(),
+      // Trading-signals release window (Lagos HH:mm)
+      signal_release_start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:mm').optional(),
+      signal_release_end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:mm').optional(),
     }),
   }),
   ctrl.updatePlatformSettings,
@@ -220,16 +223,13 @@ router.put(
 
 // --- trading signals ---
 const stakeAmount = z.string().regex(/^\d+(\.\d+)?$/, 'display dollars, e.g. "10"');
-const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:mm (Lagos time)');
 const signalBody = {
   pair: z.enum(SIGNAL_PAIRS),
-  direction: z.enum(SIGNAL_DIRECTIONS),
+  direction: z.enum(SIGNAL_DIRECTIONS), // admin's winning side — hidden from users
   returnPct: z.number().min(0).max(500),
   minStake: stakeAmount,
   maxStake: stakeAmount,
   durationSeconds: z.number().int().min(10).max(86400),
-  tradingStart: hhmm,
-  tradingEnd: hhmm,
   releaseDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 };
 router.post('/signals', validate({ body: z.object(signalBody) }), ctrl.createSignal);
@@ -253,6 +253,8 @@ router.post(
   validate({ params: idParams, body: z.object({ reason: z.string().trim().max(300).optional() }) }),
   ctrl.cancelSignal,
 );
+// Hard-delete a signal that has no contracts on it (use cancel to refund if it does)
+router.delete('/signals/:id', validate({ params: idParams }), ctrl.deleteSignal);
 router.post(
   '/signals/release',
   validate({ body: z.object({ force: z.boolean().optional() }) }),

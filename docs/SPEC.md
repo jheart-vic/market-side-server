@@ -44,7 +44,8 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - **Password management**
   - Change password (authenticated, current password required)
   - **Forgot/reset**: captcha + one **unused recovery code** → set new password (`POST /api/auth/reset-password {identifier, recoveryCode, newPassword, captcha}`). Codes are case/format-insensitive, single-use (burned on success), and a reset revokes all sessions. Failures are uniform (`RESET_FAILED`) whether the account or code is wrong — no oracle
-- **Sessions & devices** — a user can see and manage their active logins: `GET /api/sessions` (each with a parsed device label, IP, timestamps, and a `current` flag for the caller's own session), `DELETE /api/sessions/:id` (log out that device), `POST /api/sessions/revoke-others` (log out all other devices). Backed by the `Session` model; current session is matched via the refresh-cookie hash. Revoking invalidates a session's refresh token immediately; its short-lived access token lapses within `ACCESS_TOKEN_TTL`. _(Multi-account switching is deferred to v2.)_
+- **Sessions & devices** — a user can see and manage their active logins: `GET /api/sessions` (each with a parsed device label, IP, timestamps, and a `current` flag for the caller's own session), `DELETE /api/sessions/:id` (log out that device), `POST /api/sessions/revoke-others` (log out all other devices). Backed by the `Session` model; current session is matched via the refresh-cookie hash. Revoking invalidates a session's refresh token immediately; its short-lived access token lapses within `ACCESS_TOKEN_TTL`.
+- **Multi-account switching** (Gmail/Slack-style) — several **full, independent** accounts can be signed into one browser and switched between instantly. The active account uses the normal `ms_access`/`ms_refresh`/`ms_csrf` cookies; a separate **signed httpOnly `ms_accounts`** cookie holds the *inactive* linked accounts (each with its own live refresh token) plus a pointer to the active one — so switching is fully server-mediated and no token is ever exposed to JS. Endpoints (all authenticated): `GET /api/auth/accounts` (switcher list), `POST /api/auth/accounts/add` (a **full login** — captcha + password, TOTP if 2FA — that appends the account and makes it active), `POST /api/auth/accounts/switch {userId}`, `POST /api/auth/accounts/remove {userId}`, `POST /api/auth/accounts/logout-others` (keep only the active one). Default `POST /api/auth/logout` signs out only the **active** account and promotes the next linked one (full logout only when none remain). Cap: **5** accounts per browser. **Anti-abuse:** accounts added together are unioned into a durable `User.linkGroupId`, and referral commissions + referral spin credits are **not paid between accounts in the same link group** (self-referral guard).
 - **KYC** — document upload + status lifecycle: `unverified → pending → approved / rejected`
 - **Account states** — `active` / `frozen` (admin-controlled); frozen users can log in but cannot transact
 
@@ -81,18 +82,15 @@ _A crypto/NGN trading platform. This document splits the requirements in [projec
 - Order records: pair, side, amount, price, fee, timestamp, status
 - Trading history per user; **profit/loss computation** (realized per trade + unrealized from open positions) feeding the dashboard "total profit/loss"
 
-### 2.7 Trading Signals ("Contract Order" — binary-options mechanic)
-- Admin-published signals are **directional trade tips, not guaranteed returns** — the user wins or loses based on actual price movement (client-confirmed 2026-07-05)
-- Signal fields: pair (**quoted vs NGN**, e.g. BCH/NGN — the signal universe includes BCH beyond the four trading assets; USDT-quoted pairs may be added later), direction (**CALL** = price up / **PUT** = down), **fixed return %**, min/max stake, **contract duration in seconds** (e.g. 60s), **trading window** (Lagos wall-clock, e.g. 18:00–20:00) during which contracts may be placed, release date
-- **Released daily within the 3:00 pm – 5:00 pm window (Africa/Lagos)** — a scheduled job publishes each day's signals; contracts can only be placed inside each signal's own trading window
-- **Placing a contract order**: user stakes **dollars** (platform currency, moved to `held` via ledger) and picks CALL or PUT; the platform snapshots the **entry price** from PriceService at that moment
-- **Settlement** at entry + duration: the job snapshots the **settlement price** and compares against entry:
-  - direction correct → **win**: stake + fixed return % credited via ledger
-  - direction wrong → **loss**: the full stake is forfeited (hold settled out via ledger)
-  - no tie case (client decision 2026-07-05): settlement price equal to entry counts as a loss
-  - both prices are stored on the position so every outcome is provable from our own data
-- **Signals cannot be repeated**: each user may hold a given signal **at most once** (unique `user + signal` index)
-- Endpoints: list today's/active signals, place a contract order, my positions/history
+### 2.7 Trading Signals ("Contract Order" — admin-decided binary options)
+- **Outcome is admin-decided** (client 2026-07-09, supersedes the price-based model): each signal carries a `direction` (**CALL**/**PUT**) that is the **secret winning side**, **never shown to users**. A contract **wins iff the user's own blind pick matches the signal's direction** — real price movement does not decide it. (Entry/settle prices are still snapshotted best-effort from PriceService, but only for display; they no longer determine win/lose.)
+- Signal fields: pair (**quoted vs NGN**, e.g. BCH/NGN — includes BCH beyond the four trading assets), the secret `direction`, **fixed return %**, min/max stake (dollars), **contract duration in seconds** (e.g. 60s), release day. *(The old per-signal trading window was removed.)*
+- **Release window is admin-configurable** (settings `signal_release_start`/`signal_release_end`, Lagos wall-clock, default **15:00–17:00**). A signal **created inside the window goes live immediately**; otherwise it stays scheduled and the release job publishes it when the window opens (admin `force`-release publishes early). A released signal is **tradeable only while the clock is still inside the window** (single-window model — released-in-window = tradeable).
+- **Placing a contract order**: user stakes **dollars** (moved to `held` via ledger) and picks CALL or PUT blind; entry price snapshotted (cosmetic).
+- **Settlement** at entry + duration: `won = user pick === signal's secret direction`. Win → stake + fixed return % credited; lose → full stake forfeited. Settled via ledger.
+- **Signals cannot be repeated**: each user may hold a given signal **at most once** (unique `user + signal` index).
+- **Admin management**: create/edit(scheduled only)/cancel (refunds open contracts)/**delete** (`DELETE /api/admin/signals/:id` — only when no contracts exist; use cancel to refund otherwise)/release.
+- Endpoints: list today's/active signals (direction hidden), place a contract order, my positions/history.
 - Maps to the **"Contract order"** item in the Mine section
 
 ### 2.8 Referral System

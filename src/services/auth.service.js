@@ -248,7 +248,20 @@ export async function adminLogin({ email, password, meta = {} }) {
   // password are indistinguishable by timing.
   const emailOk = constantTimeEqual(String(email ?? '').trim().toLowerCase(), env.ADMIN_EMAIL.toLowerCase());
   const passwordOk = constantTimeEqual(String(password ?? ''), env.ADMIN_PASSWORD);
-  if (!emailOk || !passwordOk) throw AUTH_FAILED();
+  if (!emailOk || !passwordOk) {
+    // TEMP DIAGNOSTIC — logs no secret values, only lengths + which side failed.
+    // Remove once the admin login issue is resolved.
+    logger.warn(
+      {
+        emailOk,
+        passwordOk,
+        received: { emailLen: String(email ?? '').length, passwordLen: String(password ?? '').length },
+        env: { emailLen: env.ADMIN_EMAIL.length, passwordLen: env.ADMIN_PASSWORD.length },
+      },
+      'admin login rejected'
+    );
+    throw AUTH_FAILED();
+  }
 
   let admin = await User.findOne({ email: env.ADMIN_EMAIL.toLowerCase() });
   if (!admin) admin = await createBootstrapAdmin(meta);

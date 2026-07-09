@@ -57,6 +57,8 @@ async function api(path, { method = 'GET', body, csrf = false } = {}) {
 const stamp = Date.now().toString().slice(-9);
 const testEmail = `http-${stamp}@test.local`;
 let userId;
+let userId2; // second account for the multi-account switcher test
+let userId3; // third account, created via the "create account" switcher endpoint
 let target; // impersonation target, created directly in the DB
 let server;
 let socketGateway;
@@ -391,7 +393,103 @@ try {
   assert.equal(meBack.body.impersonation, null);
   console.log('✓ impersonate → me is target, admin routes 403 → exit → admin restored');
 
-  // logout clears cookies; me becomes 401
+  // --- multi-account switcher (Gmail-style) ---
+  // active = user1. Switcher starts with just the active account.
+  let accts = (await api('/api/auth/accounts')).body.accounts;
+  assert.equal(accts.length, 1);
+  assert.ok(accts[0].active && accts[0].id === userId, 'switcher lists the active account');
+
+  // register a second user out-of-band (raw fetch, cookies NOT stored in the jar)
+  const email2 = `http2-${stamp}@test.local`;
+  const reg2 = await fetch(`${base}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      phone: '081' + stamp.slice(1),
+      email: email2,
+      username: `http2_${stamp}`,
+      fullName: 'HTTP E2E User Two',
+      password: 'Passw0rd!x2',
+      ...(await seedCaptcha('register')),
+    }),
+  });
+  const reg2Body = JSON.parse(await reg2.text());
+  assert.equal(reg2.status, 201, JSON.stringify(reg2Body));
+  userId2 = reg2Body.user.id;
+
+  // add it to the switcher (full login) → Gmail-style, the new account becomes active
+  const add = await api('/api/auth/accounts/add', {
+    method: 'POST',
+    csrf: true,
+    body: { identifier: email2, password: 'Passw0rd!x2', ...(await seedCaptcha('login')) },
+  });
+  assert.equal(add.status, 201, JSON.stringify(add.body));
+  assert.equal(add.body.user.email, email2);
+  assert.equal(add.body.accounts.length, 2);
+  assert.equal((await api('/api/auth/me')).body.user.email, email2, 'active account is now the added one');
+
+  // adding forms a durable anti-abuse link group across both accounts
+  const [u1doc, u2doc] = await Promise.all([
+    User.findById(userId).select('linkGroupId'),
+    User.findById(userId2).select('linkGroupId'),
+  ]);
+  assert.ok(
+    u1doc.linkGroupId && u2doc.linkGroupId && String(u1doc.linkGroupId) === String(u2doc.linkGroupId),
+    'linked accounts share a durable linkGroupId',
+  );
+
+  accts = (await api('/api/auth/accounts')).body.accounts;
+  assert.equal(accts.find((a) => a.active).id, userId2, 'added account is active');
+  assert.ok(accts.some((a) => a.id === userId && !a.active), 'previous account parked in the switcher');
+
+  // switch back to the first account
+  const sw = await api('/api/auth/accounts/switch', { method: 'POST', csrf: true, body: { userId } });
+  assert.equal(sw.status, 200, JSON.stringify(sw.body));
+  assert.equal(sw.body.user.id, userId);
+  assert.equal((await api('/api/auth/me')).body.user.id, userId, 'switched back to the first account');
+
+  // "Create account" from the switcher: register a brand-new account while
+  // signed in → it folds in and becomes active (Gmail-style).
+  const email3 = `http3-${stamp}@test.local`;
+  const created = await api('/api/auth/accounts/register', {
+    method: 'POST',
+    csrf: true,
+    body: {
+      phone: '082' + stamp.slice(1),
+      email: email3,
+      username: `http3_${stamp}`,
+      fullName: 'HTTP E2E User Three',
+      password: 'Passw0rd!x3',
+      ...(await seedCaptcha('register')),
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  userId3 = created.body.user.id;
+  assert.equal(created.body.user.email, email3);
+  assert.ok(Array.isArray(created.body.recoveryCodes) && created.body.recoveryCodes.length === 10, 'create-account returns recovery codes');
+  assert.equal(created.body.accounts.length, 3, 'new account folded into the switcher');
+  assert.equal((await api('/api/auth/me')).body.user.email, email3, 'created account is active');
+  const u3 = await User.findById(userId3).select('linkGroupId');
+  const u1 = await User.findById(userId).select('linkGroupId');
+  assert.ok(u3.linkGroupId && String(u3.linkGroupId) === String(u1.linkGroupId), 'created account joins the link group');
+  console.log('✓ multi-account: create-account endpoint registers + folds into switcher (linked)');
+
+  // back to the first account so the cleanup below leaves a single active session
+  await api('/api/auth/accounts/switch', { method: 'POST', csrf: true, body: { userId } });
+
+  // log out the OTHER accounts, keeping only the active one
+  const others = await api('/api/auth/accounts/logout-others', { method: 'POST', csrf: true });
+  assert.equal(others.status, 200);
+  assert.equal(others.body.accounts.length, 1);
+  assert.equal(others.body.accounts[0].id, userId);
+
+  // the removed account can no longer be switched to
+  const swGone = await api('/api/auth/accounts/switch', { method: 'POST', csrf: true, body: { userId: userId2 } });
+  assert.equal(swGone.status, 404);
+  assert.equal(swGone.body.code, 'NOT_LINKED');
+  console.log('✓ multi-account: list → add (durable link group) → switch → logout-others → NOT_LINKED');
+
+  // logout clears cookies; me becomes 401 (single active account, none to promote → 204)
   const out = await api('/api/auth/logout', { method: 'POST', csrf: true });
   assert.equal(out.status, 204);
   const meAfter = await api('/api/auth/me');
@@ -414,6 +512,17 @@ try {
       AuditLog.collection.deleteMany({ actor: uid }),
     ]);
     if (target) await User.deleteOne({ _id: target._id });
+    for (const id of [userId2, userId3].filter(Boolean)) {
+      const uid = new mongoose.Types.ObjectId(id);
+      await Promise.all([
+        User.deleteOne({ _id: id }),
+        Wallet.deleteMany({ user: id }),
+        Session.deleteMany({ user: id }),
+        Notification.deleteMany({ user: id }),
+        LedgerEntry.collection.deleteMany({ user: uid }),
+        AuditLog.collection.deleteMany({ actor: uid }),
+      ]);
+    }
     console.log('(test data cleaned up)');
   }
   socketGateway?.close();

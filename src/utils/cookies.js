@@ -28,3 +28,8 @@ export function refreshCookieOptions() {
 export function csrfCookieOptions() {
   return { ...baseCookieOptions(), httpOnly: false };
 }
+
+/** Multi-account (ms_accounts) cookie — httpOnly, long-lived like the refresh cookie. */
+export function accountsCookieOptions() {
+  return { ...baseCookieOptions(), maxAge: env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000 };
+}

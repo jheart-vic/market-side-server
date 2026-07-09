@@ -16,6 +16,9 @@ const schema = z
     COOKIE_DOMAIN: z.string().optional(),
     JWT_ACCESS_SECRET: z.string().default('dev-only-access-secret-do-not-use-in-prod'),
     JWT_REFRESH_SECRET: z.string().default('dev-only-refresh-secret-do-not-use-in-prod'),
+    // Signs the multi-account (ms_accounts) cookie. Separate secret so it can be
+    // rotated independently; prod refuses the dev default (checked below).
+    MULTI_ACCOUNT_SECRET: z.string().default('dev-only-multi-account-secret-do-not-use-in-prod'),
     ACCESS_TOKEN_TTL: z.string().default('15m'),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
     BCRYPT_ROUNDS: z.coerce.number().int().min(8).max(15).default(10),
@@ -48,7 +51,7 @@ const schema = z
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV === 'production') {
-      for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+      for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'MULTI_ACCOUNT_SECRET']) {
         if (cfg[key].startsWith('dev-only-') || cfg[key].length < 32) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

@@ -30,6 +30,11 @@ export const DEFAULTS = {
   spin_prizes: ['10', '8', '6', '5', '4', '2', '1', '0.8', '0.5'],
   spin_bonus_every: 5, // the Nth global spin of the day wins the second-lowest
   spin_referral_reward: 1, // spin credits the L1 upline earns per direct referral
+  // Trading-signals release window (Lagos wall-clock "HH:mm"). Signals created
+  // inside this window go live immediately; contracts can be placed on a
+  // released signal only while the clock is still inside the window.
+  signal_release_start: '15:00',
+  signal_release_end: '17:00',
 };
 
 let cache = null;

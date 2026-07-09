@@ -23,6 +23,7 @@ import * as settingsService from './settings.service.js';
 import * as ledgerService from './ledger.service.js';
 import * as notificationService from './notification.service.js';
 import * as auditService from './audit.service.js';
+import { sameLinkGroup } from './multiAccount.service.js';
 
 /** Prize list as BigInt smallest units, in configured (wheel) order. */
 async function wheelPrizes() {
@@ -142,6 +143,15 @@ export async function getHistory(userId, query = {}) {
 export async function awardReferralSpin(uplineId, newUser) {
   const count = Number(await settingsService.getSetting('spin_referral_reward'));
   if (!Number.isInteger(count) || count <= 0) return 0;
+
+  // Anti-abuse: don't reward a referral between accounts already linked in one
+  // browser (self-referral). At registration the new user usually isn't linked
+  // yet, so this only bites when a pre-existing link exists.
+  const [upline, source] = await Promise.all([
+    User.findById(uplineId).select('linkGroupId'),
+    User.findById(newUser._id ?? newUser.id ?? newUser).select('linkGroupId'),
+  ]);
+  if (upline && source && sameLinkGroup(upline.linkGroupId, source.linkGroupId)) return 0;
 
   await User.updateOne({ _id: uplineId }, { $inc: { spinCredits: count } });
   await notificationService.notifyUser(uplineId, {

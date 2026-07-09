@@ -1,6 +1,7 @@
 import * as authService from '../services/auth.service.js';
 import * as captchaService from '../services/captcha.service.js';
 import * as tokenService from '../services/token.service.js';
+import * as multiAccountService from '../services/multiAccount.service.js';
 import { COOKIES } from '../config/constants.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -44,10 +45,69 @@ export const refresh = asyncHandler(async (req, res) => {
   res.json({ success: true, user: result.user });
 });
 
+// Default logout signs out only the ACTIVE account; if other accounts are
+// linked in this browser, the next one is promoted (multi-account switcher).
+// Single-account sessions fall through to a full logout (204), preserving the
+// original contract.
 export const logout = asyncHandler(async (req, res) => {
-  await authService.logout(req.cookies?.[COOKIES.refresh]);
-  tokenService.clearAuthCookies(res);
+  const result = await multiAccountService.logoutActive(req, res);
+  if (result.switched) {
+    return res.json({
+      success: true,
+      switched: true,
+      user: authService.toSafeUser(result.user),
+      accounts: result.accounts,
+    });
+  }
   res.status(204).end();
+});
+
+// --- multi-account switcher (Gmail-style) ----------------------------------
+
+export const listAccounts = asyncHandler(async (req, res) => {
+  res.json({ success: true, accounts: await multiAccountService.list(req, res) });
+});
+
+// Add another account to the switcher: a full login (captcha + password, and
+// TOTP if 2FA is on) whose session is folded in and made active.
+export const addAccount = asyncHandler(async (req, res) => {
+  const result = await authService.login({ ...req.body, meta: meta(req) });
+  if (result.requiresTotp) return res.json({ success: true, requiresTotp: true });
+  const accounts = await multiAccountService.add(req, res, result);
+  res.status(201).json({ success: true, user: result.user, accounts });
+});
+
+// Create a brand-new account while signed in and fold it into the switcher
+// (Gmail "create account"). The new account becomes active; recovery codes are
+// returned once, exactly like normal registration.
+export const registerAccount = asyncHandler(async (req, res) => {
+  const result = await authService.register({ ...req.body, meta: meta(req) });
+  const accounts = await multiAccountService.add(req, res, result);
+  res.status(201).json({ success: true, user: result.user, recoveryCodes: result.recoveryCodes, accounts });
+});
+
+export const switchAccount = asyncHandler(async (req, res) => {
+  const { user, accounts } = await multiAccountService.switchTo(req, res, req.validated.body.userId);
+  res.json({ success: true, user: authService.toSafeUser(user), accounts });
+});
+
+export const removeAccount = asyncHandler(async (req, res) => {
+  const result = await multiAccountService.remove(req, res, req.validated.body.userId);
+  if (result.loggedOut) return res.status(204).end();
+  if (result.switched) {
+    return res.json({
+      success: true,
+      switched: true,
+      user: authService.toSafeUser(result.user),
+      accounts: result.accounts,
+    });
+  }
+  res.json({ success: true, accounts: result.accounts });
+});
+
+export const logoutOtherAccounts = asyncHandler(async (req, res) => {
+  const { accounts } = await multiAccountService.logoutOthers(req, res);
+  res.json({ success: true, accounts });
 });
 
 export const me = asyncHandler(async (req, res) => {

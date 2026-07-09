@@ -94,5 +94,12 @@ export const COOKIES = {
   access: 'ms_access',
   refresh: 'ms_refresh',
   csrf: 'ms_csrf',
+  // Multi-account switcher: signed httpOnly cookie holding the *inactive* linked
+  // accounts (refresh token + label) plus a pointer to the active one. Absent for
+  // single-account users, so nothing changes for them.
+  accounts: 'ms_accounts',
 };
+
+// Max accounts a single browser may keep signed in at once (multi-account switch).
+export const MAX_LINKED_ACCOUNTS = 5;
 export const CSRF_HEADER = 'x-csrf-token';

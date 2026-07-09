@@ -3,23 +3,22 @@ import { SIGNAL_PAIRS, SIGNAL_DIRECTIONS, SIGNAL_STATUS } from '../config/consta
 
 const { Schema } = mongoose;
 
-// Admin-published "contract order" signal (binary-options mechanic): a
-// directional tip (CALL/PUT) with a fixed return %, NOT a guaranteed payout —
-// positions win or lose on actual price movement. Released daily within the
-// 3:00–5:00 pm Africa/Lagos window by a scheduled job; contracts may only be
-// placed inside the signal's own trading window.
+// Admin-published "contract order" signal (binary-options mechanic). The admin
+// picks the winning side (`direction`, CALL/PUT) which is HIDDEN from users — a
+// contract wins iff the user's own pick matches it (admin-decided outcome), and
+// pays a fixed return %. Released inside the admin-configured release window
+// (settings signal_release_start/end, Lagos): a signal created inside the window
+// goes live immediately, and contracts may be placed on a released signal only
+// while the clock is still inside that window.
 const signalSchema = new Schema(
   {
     pair: { type: String, enum: SIGNAL_PAIRS, required: true }, // quoted vs NGN (e.g. BCH/NGN)
-    direction: { type: String, enum: SIGNAL_DIRECTIONS, required: true }, // call = up, put = down
+    direction: { type: String, enum: SIGNAL_DIRECTIONS, required: true }, // admin's winning side — hidden from users
     returnPct: { type: Number, required: true, min: 0 }, // fixed return % paid on a win
     // Stakes are in PLATFORM_CURRENCY smallest units (micro-USDT — dollar platform)
     minStake: { type: Schema.Types.Decimal128, required: true },
     maxStake: { type: Schema.Types.Decimal128, required: true },
     durationSeconds: { type: Number, required: true, min: 10 }, // contract length (e.g. 60)
-    // Window during which users may place contracts, Lagos wall-clock "HH:mm"
-    tradingStart: { type: String, required: true }, // e.g. "18:00"
-    tradingEnd: { type: String, required: true }, // e.g. "20:00"
     // Lagos calendar day this signal belongs to, "YYYY-MM-DD" (utils/time.lagosDayKey)
     releaseDay: { type: String, required: true },
     releasedAt: Date, // set by the release job when it goes live

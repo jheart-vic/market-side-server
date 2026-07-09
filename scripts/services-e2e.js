@@ -320,40 +320,58 @@ try {
     assert.ok([pnl.realized, pnl.unrealized, pnl.total].every((v) => typeof v === 'string'));
     console.log(`✓ trade buy/sell round-trip (realized P/L $${sell.realizedPnl}, ≈ -fees)`);
 
-    // --- signals: create → release → contract order → duplicate rejected → settle ---
-    const sig = await signalService.createSignal(admin, {
-      pair: 'BCH/NGN',
-      direction: 'call',
-      returnPct: 8,
-      minStake: '1',
-      maxStake: '100',
-      durationSeconds: 60,
-      tradingStart: '00:00',
-      tradingEnd: '23:59',
-      releaseDay: lagosDayKey(),
-    });
-    await Signal.updateOne({ _id: sig.id }, { $set: { status: 'released', releasedAt: new Date() } });
-    const usdtBefore = (await balances(trader._id, 'USDT')).balance;
-    const pos = await signalService.placeOrder(trader._id, sig.id, { stake: '10', direction: 'call' });
-    assert.equal((await balances(trader._id, 'USDT')).held, 10_000_000n, '$10 stake held');
-    assert.ok(/^\d+(\.\d+)?$/.test(pos.entryPrice), 'entry price snapshotted');
-    await assert.rejects(signalService.placeOrder(trader._id, sig.id, { stake: '10', direction: 'put' }), /already/i);
-    await SignalPosition.updateOne({ _id: pos.id }, { $set: { settlesAt: new Date(Date.now() - 1000) } });
-    const sweep = await signalService.settleDuePositions();
-    assert.ok(sweep.settled >= 1, 'settlement sweep settled the position');
-    const settledPos = await SignalPosition.findById(pos.id);
-    assert.equal(settledPos.status, 'settled');
-    assert.ok(['win', 'lose'].includes(settledPos.outcome));
-    const after = await balances(trader._id, 'USDT');
-    assert.equal(after.held, 0n, 'hold consumed');
-    if (settledPos.outcome === 'win') {
+    // --- signals: admin-decided outcome (create in-window auto-releases → contract → settle) ---
+    // Force the release window open so placeOrder is accepted regardless of the
+    // wall clock; the original window is restored in the finally below.
+    const current = await settingsService.getSettings();
+    const savedWindow = {
+      signal_release_start: current.signal_release_start,
+      signal_release_end: current.signal_release_end,
+    };
+    await settingsService.setSettings(admin, { signal_release_start: '00:00', signal_release_end: '23:59' });
+    try {
+      // created inside the (now all-day) window → auto-released + immediately tradeable
+      const sig = await signalService.createSignal(admin, {
+        pair: 'BCH/NGN',
+        direction: 'call', // admin's hidden winning side
+        returnPct: 8,
+        minStake: '1',
+        maxStake: '100',
+        durationSeconds: 60,
+        releaseDay: lagosDayKey(),
+      });
+      assert.equal(sig.status, 'released', 'signal created in-window auto-releases');
+      assert.equal(sig.direction, 'call', 'admin view includes the winning side');
+
+      // user-facing listing must NOT expose the admin direction
+      const active = await signalService.listActive();
+      const shown = active.find((s) => s.id === sig.id);
+      assert.ok(shown && shown.direction === undefined, 'user-facing signal hides the admin direction');
+      assert.equal(shown.tradeable, true, 'released in-window signal is tradeable');
+
+      const usdtBefore = (await balances(trader._id, 'USDT')).balance;
+      const pos = await signalService.placeOrder(trader._id, sig.id, { stake: '10', direction: 'call' });
+      assert.equal((await balances(trader._id, 'USDT')).held, 10_000_000n, '$10 stake held');
+      assert.ok(/^\d+(\.\d+)?$/.test(pos.entryPrice), 'entry price snapshotted');
+      await assert.rejects(signalService.placeOrder(trader._id, sig.id, { stake: '10', direction: 'put' }), /already/i);
+
+      await SignalPosition.updateOne({ _id: pos.id }, { $set: { settlesAt: new Date(Date.now() - 1000) } });
+      const sweep = await signalService.settleDuePositions();
+      assert.ok(sweep.settled >= 1, 'settlement sweep settled the position');
+      const settledPos = await SignalPosition.findById(pos.id);
+      assert.equal(settledPos.status, 'settled');
+      // admin-decided: user picked 'call' and the winning side is 'call' → deterministic win
+      assert.equal(settledPos.outcome, 'win', 'matching the admin direction wins');
+      const after = await balances(trader._id, 'USDT');
+      assert.equal(after.held, 0n, 'hold consumed');
       assert.equal(after.balance, usdtBefore + 800_000n, 'win pays stake + 8%');
-    } else {
-      assert.equal(after.balance, usdtBefore - 10_000_000n, 'loss forfeits the stake');
+
+      const recon2 = await ledger.reconcile(trader._id);
+      assert.equal(recon2.mismatches.length, 0, 'wallets still reconcile after trades + signals');
+      console.log('✓ signal (admin-decided): create in-window auto-releases → hides direction → matching pick wins + reconcile clean');
+    } finally {
+      await settingsService.setSettings(admin, savedWindow); // restore the real release window
     }
-    const recon2 = await ledger.reconcile(trader._id);
-    assert.equal(recon2.mismatches.length, 0, 'wallets still reconcile after trades + signals');
-    console.log(`✓ signal contract order + settlement (outcome: ${settledPos.outcome}) + reconcile clean`);
   } catch (err) {
     if (err?.message?.includes('Price')) {
       console.warn(`⚠ price provider unreachable, trade/signal checks skipped: ${err.message}`);

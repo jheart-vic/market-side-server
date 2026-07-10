@@ -22,7 +22,7 @@ import { Deposit } from '../src/models/Deposit.js';
 import { Withdrawal } from '../src/models/Withdrawal.js';
 import { sha256 } from '../src/utils/tokens.js';
 import { decimal128ToBigInt, bigIntToDecimal128 } from '../src/utils/money.js';
-import { lagosDayKey, lagosWeekday } from '../src/utils/time.js';
+import { lagosDayKey, lagosWeekday, lagosParts } from '../src/utils/time.js';
 import * as auth from '../src/services/auth.service.js';
 import * as ledger from '../src/services/ledger.service.js';
 import * as userService from '../src/services/user.service.js';
@@ -369,6 +369,21 @@ try {
       const recon2 = await ledger.reconcile(trader._id);
       assert.equal(recon2.mismatches.length, 0, 'wallets still reconcile after trades + signals');
       console.log('✓ signal (admin-decided): create in-window auto-releases → hides direction → matching pick wins + reconcile clean');
+
+      // force-release OUTSIDE the window must still make a signal tradeable
+      // (the window only gates auto-release, never trading).
+      const offHour = String((lagosParts().hour + 6) % 24).padStart(2, '0');
+      await settingsService.setSettings(admin, { signal_release_start: `${offHour}:00`, signal_release_end: `${offHour}:01` });
+      const scheduled = await signalService.createSignal(admin, {
+        pair: 'BCH/NGN', direction: 'put', returnPct: 5, minStake: '1', maxStake: '50', durationSeconds: 60, releaseDay: lagosDayKey(),
+      });
+      assert.equal(scheduled.status, 'scheduled', 'created outside the window stays scheduled');
+      assert.equal(scheduled.tradeable, false, 'a scheduled signal is not tradeable');
+      const rel = await signalService.releaseDueSignals({ force: true });
+      assert.ok(rel.released >= 1, 'force release publishes scheduled signals');
+      const forced = (await signalService.listActive()).find((s) => s.id === scheduled.id);
+      assert.ok(forced && forced.tradeable === true, 'force-released signal is tradeable outside the window');
+      console.log('✓ signal force-release outside the window → tradeable');
     } finally {
       await settingsService.setSettings(admin, savedWindow); // restore the real release window
     }

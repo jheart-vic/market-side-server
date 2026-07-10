@@ -111,7 +111,11 @@ export async function revokeAllForUser(userId) {
 export function setAuthCookies(res, { accessToken, refreshToken }) {
   res.cookie(COOKIES.access, accessToken, accessCookieOptions(accessTtlMs()));
   res.cookie(COOKIES.refresh, refreshToken, refreshCookieOptions());
-  issueCsrfCookie(res);
+  // Also stash the CSRF token on res.locals so controllers can return it in the
+  // JSON body — required when the frontend is on a different domain than the API
+  // and so cannot read the (cross-site) ms_csrf cookie to echo it.
+  res.locals.csrfToken = issueCsrfCookie(res);
+  return res.locals.csrfToken;
 }
 
 export function clearAuthCookies(res) {

@@ -60,15 +60,14 @@ export async function isWithinReleaseWindow(date = new Date()) {
 }
 
 /**
- * A released signal is tradeable while it belongs to today and the clock is
- * still inside the release window. Async because the window lives in settings.
+ * A released signal is tradeable, full stop — releasing it (auto in-window OR a
+ * manual/force release) is what opens it for contracts. The release window only
+ * governs when scheduled signals AUTO-release; it does not gate trading, so a
+ * force-released signal is immediately tradeable regardless of the clock. Scoped
+ * to today's signals so stale ones don't linger.
  */
-async function isTradeable(signal, date = new Date()) {
-  return (
-    signal.status === 'released' &&
-    signal.releaseDay === lagosDayKey(date) &&
-    (await isWithinReleaseWindow(date))
-  );
+function isTradeable(signal, date = new Date()) {
+  return signal.status === 'released' && signal.releaseDay === lagosDayKey(date);
 }
 
 // `direction` is the admin's secret winning side — never expose it to users.
@@ -85,7 +84,7 @@ async function toDisplaySignal(signal, { includeDirection = false } = {}) {
     releaseDay: signal.releaseDay,
     releasedAt: signal.releasedAt,
     status: signal.status,
-    tradeable: await isTradeable(signal),
+    tradeable: isTradeable(signal),
   };
 }
 
@@ -331,12 +330,8 @@ export async function placeOrder(user, signalId, { stake, direction }) {
   if (signal.status !== 'released') {
     throw ApiError.conflict('Signal is not open for orders', 'SIGNAL_NOT_OPEN');
   }
-  if (!(await isTradeable(signal))) {
-    const { signal_release_start: s, signal_release_end: e } = await settingsService.getSettings();
-    throw ApiError.conflict(
-      `Contracts are only accepted while signals are live (${s}–${e} Lagos time)`,
-      'OUTSIDE_TRADING_WINDOW',
-    );
+  if (!isTradeable(signal)) {
+    throw ApiError.conflict('This signal is no longer open for contracts', 'SIGNAL_NOT_OPEN');
   }
   if (!SIGNAL_DIRECTIONS.includes(direction)) {
     throw ApiError.badRequest('Direction must be call or put', 'INVALID_DIRECTION');

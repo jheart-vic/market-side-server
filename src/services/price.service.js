@@ -9,7 +9,7 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
-import { MARKET_ASSETS, PLATFORM_CURRENCY } from '../config/constants.js';
+import { MARKET_ASSETS, TRADE_ASSETS, PLATFORM_CURRENCY } from '../config/constants.js';
 import { toSmallestUnits, fromSmallestUnits } from '../utils/money.js';
 
 const COINGECKO_IDS = {
@@ -18,6 +18,17 @@ const COINGECKO_IDS = {
   USDT: 'tether',
   BNB: 'binancecoin',
   BCH: 'bitcoin-cash',
+  DOGE: 'dogecoin',
+  LTC: 'litecoin',
+  EOS: 'eos',
+  FIL: 'filecoin',
+  ETC: 'ethereum-classic',
+  TRX: 'tron',
+  ADA: 'cardano',
+  DOT: 'polkadot',
+  BAT: 'basic-attention-token',
+  IOTA: 'iota',
+  FLOW: 'flow',
 };
 const ID_TO_ASSET = Object.fromEntries(Object.entries(COINGECKO_IDS).map(([a, id]) => [id, a]));
 const OHLC_DAYS = [1, 7, 14, 30, 90, 180, 365];
@@ -128,6 +139,9 @@ function toDisplay(quote) {
     priceNgn: fromSmallestUnits(quote.ngnKobo, 'NGN'),
     change24hPct: quote.change24hPct,
     volume24hUsd: quote.volume24hUsd,
+    // Only spot-tradeable assets get a Trade action in the UI; the rest are
+    // market-data only (no wallet to hold them yet).
+    tradeable: TRADE_ASSETS.includes(quote.asset),
     updatedAt: quote.updatedAt,
   };
 }

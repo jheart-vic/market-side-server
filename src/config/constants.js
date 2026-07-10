@@ -13,9 +13,14 @@ export const PLATFORM_CURRENCY = 'USDT';
 export const TRADE_ASSETS = ['BTC', 'ETH', 'BNB'];
 export const TRADE_PAIRS = TRADE_ASSETS.map((a) => `${a}/${PLATFORM_CURRENCY}`);
 
-// Everything the PriceService quotes: trading assets + USDT (the deposit/
-// withdrawal NGN rate) + signal-only assets like BCH
-export const MARKET_ASSETS = ['BTC', 'ETH', 'USDT', 'BNB', 'BCH'];
+// Everything the PriceService quotes for the Markets list: trading assets +
+// USDT (the deposit/withdrawal NGN rate) + display-only assets. Spot trading is
+// still limited to TRADE_ASSETS (adding a tradeable asset needs a wallet for
+// it). Any asset the price provider can't quote is simply skipped, never fatal.
+export const MARKET_ASSETS = [
+  'BTC', 'ETH', 'USDT', 'BNB', 'BCH',
+  'DOGE', 'LTC', 'EOS', 'FIL', 'ETC', 'TRX', 'ADA', 'DOT', 'BAT', 'IOTA', 'FLOW',
+];
 
 export const ROLES = ['user', 'admin', 'superadmin'];
 

@@ -2,10 +2,16 @@ import * as authService from '../services/auth.service.js';
 import * as captchaService from '../services/captcha.service.js';
 import * as tokenService from '../services/token.service.js';
 import * as multiAccountService from '../services/multiAccount.service.js';
+import { issueCsrfCookie } from '../middleware/csrf.js';
 import { COOKIES } from '../config/constants.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 const meta = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') });
+
+// The current CSRF token to hand back in the JSON body. Cross-domain frontends
+// can't read the httpOnly-adjacent ms_csrf cookie via document.cookie, so they
+// rely on this to echo the token in the x-csrf-token header.
+const csrfFor = (req, res) => res.locals.csrfToken || req.cookies?.[COOKIES.csrf] || issueCsrfCookie(res);
 
 export const getCaptcha = asyncHandler(async (req, res) => {
   const { purpose } = req.validated.query;
@@ -20,7 +26,7 @@ export const register = asyncHandler(async (req, res) => {
   });
   tokenService.setAuthCookies(res, { accessToken, refreshToken });
   // recoveryCodes are shown exactly once — the frontend must prompt the user to save them
-  res.status(201).json({ success: true, user, recoveryCodes });
+  res.status(201).json({ success: true, user, recoveryCodes, csrfToken: res.locals.csrfToken });
 });
 
 export const login = asyncHandler(async (req, res) => {
@@ -30,19 +36,19 @@ export const login = asyncHandler(async (req, res) => {
     return res.json({ success: true, requiresTotp: true });
   }
   tokenService.setAuthCookies(res, result);
-  res.json({ success: true, user: result.user });
+  res.json({ success: true, user: result.user, csrfToken: res.locals.csrfToken });
 });
 
 export const adminLogin = asyncHandler(async (req, res) => {
   const result = await authService.adminLogin({ ...req.validated.body, meta: meta(req) });
   tokenService.setAuthCookies(res, result);
-  res.json({ success: true, user: result.user });
+  res.json({ success: true, user: result.user, csrfToken: res.locals.csrfToken });
 });
 
 export const refresh = asyncHandler(async (req, res) => {
   const result = await authService.refresh(req.cookies?.[COOKIES.refresh], meta(req));
   tokenService.setAuthCookies(res, result);
-  res.json({ success: true, user: result.user });
+  res.json({ success: true, user: result.user, csrfToken: res.locals.csrfToken });
 });
 
 // Default logout signs out only the ACTIVE account; if other accounts are
@@ -57,6 +63,7 @@ export const logout = asyncHandler(async (req, res) => {
       switched: true,
       user: authService.toSafeUser(result.user),
       accounts: result.accounts,
+      csrfToken: res.locals.csrfToken,
     });
   }
   res.status(204).end();
@@ -74,7 +81,7 @@ export const addAccount = asyncHandler(async (req, res) => {
   const result = await authService.login({ ...req.body, meta: meta(req) });
   if (result.requiresTotp) return res.json({ success: true, requiresTotp: true });
   const accounts = await multiAccountService.add(req, res, result);
-  res.status(201).json({ success: true, user: result.user, accounts });
+  res.status(201).json({ success: true, user: result.user, accounts, csrfToken: res.locals.csrfToken });
 });
 
 // Create a brand-new account while signed in and fold it into the switcher
@@ -83,12 +90,12 @@ export const addAccount = asyncHandler(async (req, res) => {
 export const registerAccount = asyncHandler(async (req, res) => {
   const result = await authService.register({ ...req.body, meta: meta(req) });
   const accounts = await multiAccountService.add(req, res, result);
-  res.status(201).json({ success: true, user: result.user, recoveryCodes: result.recoveryCodes, accounts });
+  res.status(201).json({ success: true, user: result.user, recoveryCodes: result.recoveryCodes, accounts, csrfToken: res.locals.csrfToken });
 });
 
 export const switchAccount = asyncHandler(async (req, res) => {
   const { user, accounts } = await multiAccountService.switchTo(req, res, req.validated.body.userId);
-  res.json({ success: true, user: authService.toSafeUser(user), accounts });
+  res.json({ success: true, user: authService.toSafeUser(user), accounts, csrfToken: res.locals.csrfToken });
 });
 
 export const removeAccount = asyncHandler(async (req, res) => {
@@ -100,6 +107,7 @@ export const removeAccount = asyncHandler(async (req, res) => {
       switched: true,
       user: authService.toSafeUser(result.user),
       accounts: result.accounts,
+      csrfToken: res.locals.csrfToken,
     });
   }
   res.json({ success: true, accounts: result.accounts });
@@ -116,6 +124,9 @@ export const me = asyncHandler(async (req, res) => {
     user: authService.toSafeUser(req.user),
     // non-null while an admin is browsing as this user — frontend shows a banner
     impersonation: req.impersonatedBy ? { adminId: req.impersonatedBy } : null,
+    // lets a cross-domain frontend obtain the CSRF token on load (it can't read
+    // the ms_csrf cookie via document.cookie across domains)
+    csrfToken: csrfFor(req, res),
   });
 });
 

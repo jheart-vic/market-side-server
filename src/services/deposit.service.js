@@ -31,7 +31,10 @@ function toDisplay(deposit) {
   const rate = deposit.exchangeRate ? decimal128ToBigInt(deposit.exchangeRate) : null;
   return {
     id: deposit.id,
-    reference: deposit.reference,
+    reference: deposit.reference, // our merchant order id (MS-prefixed)
+    // Beidou platform order number — the transaction number shown in the log,
+    // captured from the checkout URL at intent and confirmed on the callback
+    gatewayOrderId: deposit.gatewayReference ?? null,
     amountNgn: fromSmallestUnits(decimal128ToBigInt(deposit.amount), 'NGN'),
     amountUsd: deposit.amountUsd
       ? fromSmallestUnits(decimal128ToBigInt(deposit.amountUsd), PLATFORM_CURRENCY)
@@ -132,6 +135,61 @@ export async function handleCallback(body) {
   }
   // 0 (init) / 1 (pending) → still in progress, just acknowledge
   return { handled: true };
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation poller (callback fallback) — the gateway retries callbacks 8
+// times then gives up, so a missed callback would strand a deposit as pending
+// forever. This queries the gateway for still-pending orders and settles them
+// with the same logic as the callback. Skips orders younger than MIN_AGE (give
+// the callback first crack) and older than MAX_AGE (abandoned). Started as a job.
+// ---------------------------------------------------------------------------
+
+const RECONCILE_MIN_AGE_MS = 3 * 60 * 1000; // 3 min — let the live callback win first
+const RECONCILE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days — stop chasing abandoned orders
+const RECONCILE_BATCH = 50;
+
+export async function reconcilePending() {
+  if (!paymentService.isConfigured()) return { checked: 0, settled: 0 };
+  const now = Date.now();
+  const pending = await Deposit.find({
+    status: 'pending',
+    createdAt: { $lte: new Date(now - RECONCILE_MIN_AGE_MS), $gte: new Date(now - RECONCILE_MAX_AGE_MS) },
+  })
+    .sort({ createdAt: 1 })
+    .limit(RECONCILE_BATCH);
+
+  let settled = 0;
+  for (const deposit of pending) {
+    let res;
+    try {
+      res = await paymentService.queryCollectionOrder(deposit.reference);
+    } catch (err) {
+      logger.warn({ err, deposit: deposit.id }, 'Deposit reconcile query failed');
+      continue;
+    }
+    const data = res?.data;
+    if (res?.code !== 200 || !data) continue;
+    if (data.orderId && !deposit.gatewayReference) deposit.gatewayReference = String(data.orderId);
+
+    const status = Number(data.orderStatus);
+    if (status === paymentService.COLLECTION_STATUS.COMPLETED) {
+      await credit(deposit, data); // credit() persists (incl. any orderId just set)
+      settled += 1;
+    } else if (
+      status === paymentService.COLLECTION_STATUS.FAILED ||
+      status === paymentService.COLLECTION_STATUS.REFUNDED
+    ) {
+      deposit.status = 'failed';
+      deposit.gatewayMeta = data;
+      await deposit.save();
+      settled += 1;
+    } else if (deposit.isModified()) {
+      await deposit.save(); // persist a newly-learned gateway orderId
+    }
+  }
+  if (settled) logger.info({ settled, checked: pending.length }, 'Deposit reconcile settled stuck orders');
+  return { checked: pending.length, settled };
 }
 
 /**

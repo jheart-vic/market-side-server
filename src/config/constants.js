@@ -74,6 +74,30 @@ export const REFERRAL_LEVELS = 3;
 export const DEFAULT_REFERRAL_RATES = { 1: 10, 2: 2, 3: 1 };
 export const REFERRAL_EVENTS = ['deposit', 'trade_fee'];
 
+// --- Salary (referral tier rewards) ---------------------------------------
+// A member is "qualified" (non-intern) when, live: cumulative deposits ≥ this,
+// cumulative trade volume (signal + spot) ≥ this, AND current USD balance ≥ this
+// (dollars — the service converts to micro-USDT via CURRENCY_DECIMALS.USDT).
+// Dropping below the balance floor downgrades a member back to intern.
+export const SALARY_QUALIFY_USD = 50;
+
+// Membership badge ladder (low → high). "intern" = below the bar; "member" =
+// qualified but under 6 valid directs; tier0…tier5 track SALARY_TIERS.
+export const SALARY_BADGES = ['intern', 'member', 'tier0', 'tier1', 'tier2', 'tier3', 'tier4', 'tier5'];
+
+// Ordered tiers: number of valid DIRECT (L1) qualified invitees → a one-time
+// reward. Fulfilled manually (user contacts customer care); no auto-credit.
+export const SALARY_TIERS = [
+  { tier: 0, invitees: 6, reward: '$50', rewardType: 'cash' },
+  { tier: 1, invitees: 15, reward: '$100', rewardType: 'cash' },
+  { tier: 2, invitees: 40, reward: '$200', rewardType: 'cash' },
+  { tier: 3, invitees: 100, reward: 'Laptop', rewardType: 'prize' },
+  { tier: 4, invitees: 400, reward: 'iPhone 17 Pro', rewardType: 'prize' },
+  { tier: 5, invitees: 1000, reward: 'Senior management + $2,000/month salary', rewardType: 'salary' },
+];
+
+export const SALARY_CLAIM_STATUS = ['pending', 'fulfilled', 'rejected'];
+
 export const NOTIFICATION_AUDIENCES = ['user', 'admin'];
 export const NOTIFICATION_TYPES = [
   'deposit_confirmed',
@@ -86,8 +110,11 @@ export const NOTIFICATION_TYPES = [
   'announcement',
   'login_alert',
   'kyc_status', // user: KYC approved/rejected
+  'salary_levelup', // user: reached a new salary tier
+  'salary_claim_status', // user: reward claim fulfilled/rejected
   'withdrawal_pending', // admin
   'kyc_submitted', // admin
+  'salary_claim', // admin: a user claimed a salary reward
   'fraud_flag', // admin
 ];
 

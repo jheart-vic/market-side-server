@@ -25,6 +25,15 @@ const userSchema = new Schema(
     // existed have none and can add one via PATCH /users/me)
     username: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     fullName: { type: String, trim: true },
+
+    // Public profile picture. Unlike KYC docs (private, signed URLs), the avatar
+    // is a public Cloudinary asset so the URL is directly usable by the frontend.
+    // null until the user uploads one; publicId is kept for replace/delete.
+    avatar: {
+      url: { type: String, default: null },
+      publicId: { type: String, default: null },
+    },
+
     passwordHash: { type: String, required: true, select: false },
 
     // Password reset is captcha + a one-time recovery code (no SMS/email OTP,

@@ -30,6 +30,7 @@ function toProfile(user) {
       submittedAt: user.kyc?.submittedAt,
       rejectionReason: user.kyc?.rejectionReason,
     },
+    avatarUrl: user.avatar?.url ?? null,
     lastLoginAt: user.lastLoginAt,
   };
 }
@@ -80,6 +81,38 @@ export async function updateProfile(userId, { email, username, fullName } = {}) 
 
   if (dirty) await user.save();
   return toProfile(user);
+}
+
+/**
+ * Set (or replace) the profile picture. The caller uploads the new asset first
+ * and passes { url, publicId }; the previously stored asset's publicId is
+ * returned so the caller can delete the orphaned upload best-effort.
+ */
+export async function setAvatar(userId, { url, publicId }) {
+  if (!url || !publicId) {
+    throw ApiError.badRequest('An uploaded image is required', 'AVATAR_REQUIRED');
+  }
+  const user = await mustFind(userId);
+  const previousPublicId = user.avatar?.publicId ?? null;
+
+  user.avatar = { url, publicId };
+  await user.save();
+
+  return { avatarUrl: url, previousPublicId };
+}
+
+/** Remove the profile picture. Returns the stored publicId so the caller can delete the asset. */
+export async function removeAvatar(userId) {
+  const user = await mustFind(userId);
+  const previousPublicId = user.avatar?.publicId ?? null;
+  if (!previousPublicId) {
+    throw ApiError.notFound('No profile picture to remove', 'AVATAR_NOT_FOUND');
+  }
+
+  user.avatar = { url: null, publicId: null };
+  await user.save();
+
+  return { previousPublicId };
 }
 
 // ---------------------------------------------------------------------------

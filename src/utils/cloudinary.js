@@ -83,6 +83,45 @@ export async function deleteVerificationDoc(publicId, resourceType = 'image') {
 }
 
 /**
+ * Upload a public profile picture. Unlike verification docs this is a normal
+ * (type:'upload') asset so the returned secure_url is directly usable by the
+ * frontend with no signing. Ingested as a square, face-focused thumbnail so
+ * every avatar is small and uniformly cropped regardless of the source image.
+ * Returns { url, publicId }.
+ */
+export function uploadAvatar(fileBuffer, folder) {
+  assertConfigured();
+
+  const options = {
+    folder,
+    resource_type: 'image',
+    use_filename: false,
+    unique_filename: true,
+    overwrite: false,
+    transformation: [
+      { width: 512, height: 512, crop: 'fill', gravity: 'face' },
+      { quality: 'auto' },
+      { fetch_format: 'auto' },
+    ],
+  };
+
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(options, (err, result) => {
+      if (err) return reject(new Error(err?.message || 'Cloudinary upload failed'));
+      if (!result) return reject(new Error('Cloudinary upload failed: no result returned'));
+      resolve({ url: result.secure_url || result.url, publicId: result.public_id });
+    });
+    stream.end(fileBuffer);
+  });
+}
+
+/** Best-effort delete of a public avatar asset (e.g. replaced or removed). */
+export async function deleteAvatar(publicId) {
+  if (!publicId || !configured) return null;
+  return cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+}
+
+/**
  * Expiring signed URL so the owner/admin can view a private document inline.
  * Private ORIGINALS are not deliverable through res.cloudinary.com s--sig--
  * URLs at all (401 "deny or ACL failure") — they must go through the

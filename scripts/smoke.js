@@ -20,6 +20,7 @@ const expectedModels = [
   'User', 'Wallet', 'LedgerEntry', 'Deposit', 'Withdrawal', 'Trade', 'Signal',
   'SignalPosition', 'Referral', 'Notification', 'Announcement',
   'AuditLog', 'Captcha', 'Session', 'Setting', 'Spin', 'SpinCounter', 'BankAccount',
+  'SalaryClaim',
 ];
 for (const name of expectedModels) {
   assert.ok(models[name]?.modelName === name, `model ${name} registered`);

@@ -53,3 +53,33 @@ export function kycUpload(req, res, next) {
     next(err); // fileFilter ApiErrors pass through as-is
   });
 }
+
+// Avatars are public profile pictures — a single image, capped smaller than
+// KYC docs since they're re-cropped to a 512px square anyway.
+const avatarUploadFields = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (SELFIE_MIME_TYPES.includes(file.mimetype)) return cb(null, true);
+    cb(ApiError.badRequest('Avatar must be an image (JPEG, PNG, WebP)', 'INVALID_FILE_TYPE'));
+  },
+}).single('avatar');
+
+const AVATAR_MULTER_MESSAGES = {
+  LIMIT_FILE_SIZE: 'Image too large (max 5 MB)',
+  LIMIT_FILE_COUNT: 'Only one image is allowed',
+  LIMIT_UNEXPECTED_FILE: 'Unexpected file field — use "avatar"',
+};
+
+/** multipart parser for POST /users/me/avatar with multer errors mapped to 400s. */
+export function avatarUpload(req, res, next) {
+  avatarUploadFields(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      return next(
+        ApiError.badRequest(AVATAR_MULTER_MESSAGES[err.code] ?? err.message, 'UPLOAD_REJECTED'),
+      );
+    }
+    next(err);
+  });
+}

@@ -73,6 +73,11 @@ function labelOf(user) {
   return user.fullName || user.username || user.email || 'Account';
 }
 
+/** Avatar URL whether `user` is a Mongoose doc ({avatar:{url}}) or a safe-user ({avatarUrl}). */
+function avatarUrlOf(user) {
+  return user.avatar?.url ?? user.avatarUrl ?? null;
+}
+
 /** A cookie entry for the given active user + its current refresh token. */
 function entryFor(user, refreshToken) {
   return { id: String(user._id ?? user.id), rt: refreshToken, label: labelOf(user) };
@@ -154,14 +159,21 @@ async function formatList(active, linked) {
   const activeId = String(active._id ?? active.id); // may be a doc or a safe-user
   const ids = linked.map((e) => e.id);
   const fresh = ids.length
-    ? await User.find({ _id: { $in: ids } }).select('fullName username email')
+    ? await User.find({ _id: { $in: ids } }).select('fullName username email avatar')
     : [];
   const freshById = new Map(fresh.map((u) => [String(u._id), u]));
 
-  const out = [{ id: activeId, label: labelOf(active), active: true }];
+  const out = [
+    { id: activeId, label: labelOf(active), avatarUrl: avatarUrlOf(active), active: true },
+  ];
   for (const entry of linked) {
     const u = freshById.get(String(entry.id));
-    out.push({ id: String(entry.id), label: u ? labelOf(u) : entry.label, active: false });
+    out.push({
+      id: String(entry.id),
+      label: u ? labelOf(u) : entry.label,
+      avatarUrl: u ? avatarUrlOf(u) : null,
+      active: false,
+    });
   }
   return out;
 }

@@ -7,8 +7,14 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import * as priceService from '../services/price.service.js';
 import * as signalService from '../services/signal.service.js';
+import * as depositService from '../services/deposit.service.js';
+import * as withdrawalService from '../services/withdrawal.service.js';
 
 const timers = [];
+
+// Gateway reconciliation cadence — the callback is the primary path; this is the
+// safety net for the ~1% of callbacks the gateway never manages to deliver.
+const RECONCILE_INTERVAL_MS = 2 * 60 * 1000;
 
 function guarded(name, fn) {
   let running = false;
@@ -30,8 +36,12 @@ export function startJobs() {
     setInterval(guarded('price-refresh', priceService.refreshCache), env.PRICE_REFRESH_SECONDS * 1000),
     setInterval(guarded('signal-release', signalService.releaseDueSignals), 60 * 1000),
     setInterval(guarded('signal-settle', signalService.settleDuePositions), 5 * 1000),
+    setInterval(guarded('deposit-reconcile', depositService.reconcilePending), RECONCILE_INTERVAL_MS),
+    setInterval(guarded('withdrawal-reconcile', withdrawalService.reconcilePending), RECONCILE_INTERVAL_MS),
   );
-  logger.info('Background jobs started (price refresh, signal release, signal settlement)');
+  logger.info(
+    'Background jobs started (price refresh, signal release, signal settlement, deposit/withdrawal reconcile)',
+  );
 }
 
 export function stopJobs() {

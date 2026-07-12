@@ -106,6 +106,9 @@ function toDisplay(withdrawal) {
   const usd = (v) => (v == null ? null : fromSmallestUnits(decimal128ToBigInt(v), PLATFORM_CURRENCY));
   return {
     id: withdrawal.id,
+    reference: `MS${withdrawal.id}`, // our merchant order id sent to the gateway
+    // Beidou platform order number for this payout (arrives on the callback)
+    gatewayOrderId: withdrawal.payoutReference ?? null,
     amountUsd: usd(withdrawal.amountUsd),
     feeUsd: usd(withdrawal.fee),
     netAmountUsd: usd(withdrawal.netAmountUsd),
@@ -361,6 +364,57 @@ export async function handleCallback(body) {
     await withdrawal.save(); // 1 processing / 2 frozen — keep reference, wait
   }
   return { handled: true };
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation poller (callback fallback) — settles payouts whose callback
+// was missed by querying the gateway. Skips orders younger than MIN_AGE (give
+// the callback first) and older than MAX_AGE (abandoned). Started as a job.
+// ---------------------------------------------------------------------------
+
+const RECONCILE_MIN_AGE_MS = 3 * 60 * 1000;
+const RECONCILE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const RECONCILE_BATCH = 50;
+
+export async function reconcilePending() {
+  if (!paymentService.isConfigured()) return { checked: 0, settled: 0 };
+  const now = Date.now();
+  const open = await Withdrawal.find({
+    status: { $in: ['pending', 'approved'] },
+    createdAt: { $lte: new Date(now - RECONCILE_MIN_AGE_MS), $gte: new Date(now - RECONCILE_MAX_AGE_MS) },
+  })
+    .sort({ createdAt: 1 })
+    .limit(RECONCILE_BATCH);
+
+  let settled = 0;
+  for (const withdrawal of open) {
+    let res;
+    try {
+      res = await paymentService.queryPayoutOrder(`MS${withdrawal.id}`);
+    } catch (err) {
+      logger.warn({ err, withdrawal: withdrawal.id }, 'Withdrawal reconcile query failed');
+      continue;
+    }
+    const data = res?.data;
+    if (res?.code !== 200 || !data) continue;
+    if (data.orderId && !withdrawal.payoutReference) withdrawal.payoutReference = String(data.orderId);
+
+    const status = Number(data.orderStatus);
+    if (status === paymentService.PAYOUT_STATUS.COMPLETED) {
+      await markPaid(withdrawal); // persists (incl. any orderId just set)
+      settled += 1;
+    } else if (
+      status === paymentService.PAYOUT_STATUS.FAILED ||
+      status === paymentService.PAYOUT_STATUS.REFUNDED
+    ) {
+      await refund(withdrawal, data.orderRemarks || 'Payout failed at gateway');
+      settled += 1;
+    } else if (withdrawal.isModified()) {
+      await withdrawal.save(); // persist a newly-learned gateway orderId
+    }
+  }
+  if (settled) logger.info({ settled, checked: open.length }, 'Withdrawal reconcile settled stuck orders');
+  return { checked: open.length, settled };
 }
 
 // ---------------------------------------------------------------------------

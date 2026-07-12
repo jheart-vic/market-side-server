@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as ctrl from '../controllers/user.controller.js';
 import { validate } from '../middleware/validate.js';
 import { requireAuth } from '../middleware/auth.js';
-import { kycUpload } from '../middleware/upload.js';
+import { kycUpload, avatarUpload } from '../middleware/upload.js';
 import { authLimiter } from '../middleware/rateLimit.js';
 import { KYC_DOC_TYPES } from '../config/constants.js';
 
@@ -29,6 +29,11 @@ router.patch(
   }),
   ctrl.updateMe,
 );
+
+// Profile picture: upload/replace (POST) and remove (DELETE). Public asset,
+// single image parsed by the avatarUpload multer middleware.
+router.post('/me/avatar', requireAuth, authLimiter, avatarUpload, ctrl.uploadAvatarImage);
+router.delete('/me/avatar', requireAuth, ctrl.deleteAvatarImage);
 
 // multipart: kycUpload (multer) parses files + text fields, then zod checks docType.
 // Frozen users may still complete KYC — verification is not a transaction.

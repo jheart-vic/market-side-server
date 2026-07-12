@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import * as ctrl from '../controllers/admin.controller.js';
+import * as salaryCtrl from '../controllers/salary.controller.js';
 import { validate } from '../middleware/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
@@ -15,6 +16,7 @@ import {
   SIGNAL_DIRECTIONS,
   DEPOSIT_STATUS,
   WITHDRAWAL_STATUS,
+  SALARY_CLAIM_STATUS,
 } from '../config/constants.js';
 
 const router = Router();
@@ -259,6 +261,30 @@ router.post(
   '/signals/release',
   validate({ body: z.object({ force: z.boolean().optional() }) }),
   ctrl.releaseSignals,
+);
+
+// --- salary reward claims (manual fulfillment) ---
+router.get(
+  '/salary/claims',
+  validate({
+    query: z.object({
+      status: z.enum(SALARY_CLAIM_STATUS).optional(),
+      tier: z.coerce.number().int().min(0).optional(),
+      ...pagination,
+    }),
+  }),
+  salaryCtrl.adminList,
+);
+router.post(
+  '/salary/claims/:id/review',
+  validate({
+    params: idParams,
+    body: z.object({
+      decision: z.enum(['fulfilled', 'rejected']),
+      note: z.string().trim().max(300).optional(),
+    }),
+  }),
+  salaryCtrl.adminReview,
 );
 
 // --- announcements ---

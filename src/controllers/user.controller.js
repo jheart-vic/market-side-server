@@ -2,6 +2,8 @@ import * as userService from '../services/user.service.js';
 import {
   uploadVerificationDocs,
   deleteVerificationDoc,
+  uploadAvatar,
+  deleteAvatar,
 } from '../utils/cloudinary.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -14,6 +16,48 @@ export const me = asyncHandler(async (req, res) => {
 export const updateMe = asyncHandler(async (req, res) => {
   const profile = await userService.updateProfile(req.user._id, req.validated.body);
   res.json({ success: true, profile });
+});
+
+/**
+ * multipart/form-data (parsed by middleware/upload.js avatarUpload):
+ *   avatar — single image (JPEG, PNG, WebP). Uploading again replaces the
+ *   existing picture; the old asset is deleted best-effort.
+ */
+export const uploadAvatarImage = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw ApiError.badRequest('Attach the image as "avatar"', 'AVATAR_REQUIRED');
+  }
+
+  const upload = await uploadAvatar(req.file.buffer, `avatars/${req.user.id}`);
+
+  let result;
+  try {
+    result = await userService.setAvatar(req.user._id, upload);
+  } catch (err) {
+    // couldn't persist — don't leak the fresh upload
+    await deleteAvatar(upload.publicId).catch(() => {});
+    throw err;
+  }
+
+  // replaced an older picture: clear the orphaned asset, best-effort
+  if (result.previousPublicId) {
+    deleteAvatar(result.previousPublicId).catch((err) =>
+      logger.warn({ user: req.user.id, err: err.message }, 'Stale avatar cleanup failed'),
+    );
+  }
+
+  res.json({ success: true, avatarUrl: result.avatarUrl });
+});
+
+/** Remove the profile picture and delete the stored asset best-effort. */
+export const deleteAvatarImage = asyncHandler(async (req, res) => {
+  const { previousPublicId } = await userService.removeAvatar(req.user._id);
+  if (previousPublicId) {
+    deleteAvatar(previousPublicId).catch((err) =>
+      logger.warn({ user: req.user.id, err: err.message }, 'Avatar asset deletion failed'),
+    );
+  }
+  res.json({ success: true, avatarUrl: null });
 });
 
 /**

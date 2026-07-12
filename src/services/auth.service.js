@@ -67,6 +67,7 @@ export function toSafeUser(user) {
     email: user.email,
     username: user.username ?? null,
     fullName: user.fullName ?? null,
+    avatarUrl: user.avatar?.url ?? null,
     role: user.role,
     status: user.status,
     kycStatus: user.kyc?.status,

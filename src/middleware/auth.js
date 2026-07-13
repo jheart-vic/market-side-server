@@ -16,7 +16,11 @@ async function resolveUser(req) {
   } catch {
     throw ApiError.unauthorized('Session expired or invalid', 'INVALID_TOKEN');
   }
-  const user = await User.findById(payload.sub);
+  // +withdrawalPinHash (select:false) so toSafeUser can expose the
+  // `hasWithdrawalPin` boolean — without it the flag is always false and the
+  // app keeps asking the user to set a PIN they already have. Only the boolean
+  // is ever serialized; the hash itself never leaves the server.
+  const user = await User.findById(payload.sub).select('+withdrawalPinHash');
   if (!user) throw ApiError.unauthorized('Account no longer exists', 'USER_GONE');
   // Impersonation token (admin support tool): the admin's id rides in `imp`.
   // Handlers can tell a real session from an impersonated one via this flag.

@@ -71,7 +71,7 @@ _Service layer + HTTP routes done & e2e-tested (`npm run test:auth` = service le
 - [x] Endpoints: `GET /api/signals/active`, `GET /api/signals/positions`; admin CRUD `POST|GET /api/admin/signals`, `PATCH /:id` (scheduled only), `POST /:id/cancel` (refunds open stakes)
 
 ## 8. Referral System (SPEC §2.8)
-- [x] Unique referral code + shareable link (`getShareLink` → `CLIENT_ORIGIN/register?ref=CODE`); 3-level tree linkage on registration (`resolveReferrer`)
+- [x] Unique referral code + shareable link (`getShareLink` → `CLIENT_ORIGIN/register?invite=CODE`); 3-level tree linkage on registration (`resolveReferrer`)
 - [x] Referral QR code (`getQrCode` → data-URL PNG); route pending
 - [x] 3-level commissions — `payCommissions({event, sourceUser, baseAmount, sourceRef})` pays L1–L3 in NGN via ledger + Referral rows + notifications; rates admin-configurable via `GET|PUT /api/admin/referral-rates`
 - [x] Stats + share — `GET /api/referrals/stats|link|qr`

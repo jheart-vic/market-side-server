@@ -236,7 +236,7 @@ export async function getMembers(userId, { level, ...query } = {}) {
 }
 
 export function getShareLink(user) {
-  return `${env.CLIENT_ORIGIN}/register?ref=${user.referralCode}`;
+  return `${env.CLIENT_ORIGIN}/register?invite=${user.referralCode}`;
 }
 
 /** Server-generated QR (SPEC §2.8) — data-URL PNG for the frontend to render/download. */

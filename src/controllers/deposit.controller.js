@@ -1,7 +1,9 @@
 import * as depositService from '../services/deposit.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { clientIp } from '../utils/requestIp.js';
 
-const meta = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') });
+// clientIp (not req.ip): send the real client public IP to the gateway.
+const meta = (req) => ({ ip: clientIp(req), userAgent: req.get('user-agent') });
 
 export const create = asyncHandler(async (req, res) => {
   const deposit = await depositService.createIntent(req.user, req.validated.body, meta(req));

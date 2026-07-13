@@ -152,6 +152,14 @@ export async function createPayoutOrder({ merchantOrderId, amount, account, name
   if (CFG.callbackBaseUrl) payload.callbackUrl = `${CFG.callbackBaseUrl}/api/payments/withdraw/callback`;
 
   const raw = await post(PATHS.createPayout, payload);
+  if (raw?.code !== 200) {
+    // Log the submit IP + gateway message so payout rejections (e.g. 该ip禁止访问)
+    // are diagnosable from the exact values sent.
+    logger.warn(
+      { ip: payload.ip, merchantOrderId: payload.merchantOrderId, code: raw?.code, msg: raw?.msg },
+      'Gateway payout rejected',
+    );
+  }
   return { ok: raw?.code === 200, raw };
 }
 

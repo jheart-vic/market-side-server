@@ -1,7 +1,10 @@
 import * as withdrawalService from '../services/withdrawal.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { clientIp } from '../utils/requestIp.js';
 
-const meta = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') });
+// clientIp (not req.ip): the gateway's payout submit-IP must be the real client
+// public IP, or it rejects with 该ip禁止访问 (see utils/requestIp).
+const meta = (req) => ({ ip: clientIp(req), userAgent: req.get('user-agent') });
 
 export const banks = asyncHandler(async (req, res) => {
   res.json({ success: true, banks: withdrawalService.listBanks() });

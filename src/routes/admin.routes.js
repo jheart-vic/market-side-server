@@ -228,7 +228,9 @@ const stakeAmount = z.string().regex(/^\d+(\.\d+)?$/, 'display dollars, e.g. "10
 const signalBody = {
   pair: z.enum(SIGNAL_PAIRS),
   direction: z.enum(SIGNAL_DIRECTIONS), // admin's winning side — hidden from users
-  returnPct: z.number().min(0).max(500),
+  // fractional returns allowed (2.5, 2.3…); capped at 2dp — percentOf() does
+  // String(percent), and a value under 1e-6 would stringify as "1e-7" and throw
+  returnPct: z.number().min(0).max(500).multipleOf(0.01),
   minStake: stakeAmount,
   maxStake: stakeAmount,
   durationSeconds: z.number().int().min(10).max(86400),

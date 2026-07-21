@@ -26,7 +26,17 @@ const CFG = {
   depositPayType: env.PG_DEPOSIT_PAYTYPE,
   withdrawPayType: env.PG_WITHDRAW_PAYTYPE,
   callbackBaseUrl: (env.PG_CALLBACK_BASE_URL ?? '').replace(/\/+$/, ''),
+  // Whitelisted merchant IP for the `ip` submit field — see env.PG_SUBMIT_IP.
+  submitIp: env.PG_SUBMIT_IP ?? '',
 };
+
+/**
+ * The `ip` the gateway checks against the MERCHANT whitelist. When PG_SUBMIT_IP
+ * is configured we always send it: the end user's IP is never whitelisted, so
+ * forwarding it is what produces 该ip禁止访问 ("IP forbidden"). The caller's IP
+ * stays the fallback for local/dev where no submit IP is configured.
+ */
+const submitIp = (callerIp) => CFG.submitIp || callerIp || '127.0.0.1';
 
 // Resource paths from the doc's "Full address" column (baseUrl ends with /api/order)
 const PATHS = {
@@ -123,7 +133,7 @@ export async function createCollectionOrder({ merchantOrderId, amount, ip, order
     transAmt: amount,
     payType: CFG.depositPayType,
     countryCode: CFG.countryCode,
-    ip: ip || '127.0.0.1',
+    ip: submitIp(ip),
   };
   if (orderRemark) payload.orderRemark = orderRemark;
   if (CFG.callbackBaseUrl) payload.callbackUrl = `${CFG.callbackBaseUrl}/api/payments/deposit/callback`;
@@ -146,7 +156,7 @@ export async function createPayoutOrder({ merchantOrderId, amount, account, name
     bnkCode,
     payType: CFG.withdrawPayType,
     countryCode: CFG.countryCode,
-    ip: ip || '127.0.0.1',
+    ip: submitIp(ip),
   };
   if (remark) payload.remark = remark;
   if (CFG.callbackBaseUrl) payload.callbackUrl = `${CFG.callbackBaseUrl}/api/payments/withdraw/callback`;

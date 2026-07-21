@@ -37,7 +37,11 @@ const schema = z
     // Price provider (PriceService — CoinGecko seed, swappable)
     COINGECKO_BASE_URL: z.string().url().default('https://api.coingecko.com/api/v3'),
     COINGECKO_API_KEY: z.string().optional(), // demo/pro key; optional for the free tier
-    PRICE_REFRESH_SECONDS: z.coerce.number().int().positive().default(30),
+    // Budget this against the price provider's quota: the refresh job runs on
+    // this interval 24/7, so seconds=30 is ~86k calls/month — 8.6x CoinGecko's
+    // free 10k allowance, which exhausts the key in ~3.5 days and takes down
+    // deposits/withdrawals/trades with it. 300s ≈ 8.6k/month fits the free tier.
+    PRICE_REFRESH_SECONDS: z.coerce.number().int().positive().default(300),
     TRADE_FEE_PCT: z.coerce.number().min(0).max(10).default(0.1), // spot trade fee, percent
     // Payment gateway (deposits/withdrawals)
     PG_BASE_URL: z.string().url().optional(),
@@ -48,6 +52,11 @@ const schema = z
     PG_WITHDRAW_PAYTYPE: z.string().default('NGN_PAYOUT'),
     PG_CALLBACK_BASE_URL: z.string().url().optional(),
     PG_CALLBACK_IPS: z.string().default(''), // comma-separated allowlist for webhook source IPs
+    // The IP sent as the gateway's `ip` submit field. The gateway matches this
+    // against the MERCHANT whitelist, so it must be THIS SERVER's public IP —
+    // not the end user's (which is never whitelisted → 该ip禁止访问). Leave unset
+    // to fall back to the caller's IP.
+    PG_SUBMIT_IP: z.string().ip({ version: 'v4' }).optional(),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV === 'production') {
